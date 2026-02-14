@@ -1,26 +1,14 @@
 {
-  "name": "contract-test-latest",
-  "version": "0.0.1",
+  "name": "axelnode-intercom",
+  "version": "1.0.0",
+  "description": "AxelNode - Web3 AI Education Intercom Node",
   "type": "module",
   "main": "index.js",
-  "pear": {
-    "name": "contract-test-latest",
-    "type": "terminal"
+  "scripts": {
+    "start": "node index.js"
   },
   "dependencies": {
-    "b4a": "^1.6.7",
-    "bare-ws": "2.0.3",
-    "compact-encoding": "^2.18.0",
-    "crypto": "npm:bare-node-crypto",
-    "fs": "npm:bare-node-fs",
-    "path": "npm:bare-node-path",
-    "protomux": "^3.10.1",
-    "trac-msb": "git+https://github.com/Trac-Systems/main_settlement_bus.git#5088921",
-    "trac-peer": "git+https://github.com/Trac-Systems/trac-peer.git#d108f52",
-    "trac-wallet": "1.0.1",
-    "util": "npm:bare-node-util"
-  },
-  "overrides": {
-    "trac-wallet": "1.0.1"
+    "@tracsystems/intercom": "^1.0.0",
+    "@tracsystems/sidechannel": "^1.0.0"
   }
 }
