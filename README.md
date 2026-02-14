@@ -1,24 +1,31 @@
-# AxelBuddy Intercom AI
+# AxelNode – AI Web3 Education Node
 
-AxelBuddy Intercom AI is a modified fork of Intercom,
-transformed into a Web3 onboarding assistant.
+AxelNode is a custom-built Intercom node focused on Web3 safety and learning.
 
-## What Makes This Different?
+---
 
-This version focuses on:
+## 🔗 TRAC Address
 
-- Tokenomics education
-- Liquidity explanation
-- Smart contract breakdown
-- Swap guidance
-- Web3 risk awareness
+AxelNode Intercom Identity:
 
-## Features
-
-- Structured AI responses
-- Beginner-friendly explanations
-- Web3-focused system behavior
-
-## Trac Address
-
+TRAC Address:
 trac1ldy25wuhv7vh6lxkp3vzmcc47y9wy25xr88gp32amtpxgn0hc8vqr5evd5
+
+Replace the placeholder above with your official Trac peer address.
+
+---
+
+## 🚀 Features
+
+- Tokenomics explanation
+- Liquidity risk education
+- Swap safety guidance
+- Basic risk detection prompts
+- Beginner-friendly Web3 onboarding
+
+---
+
+## 📦 Installation
+
+```bash
+npm install
