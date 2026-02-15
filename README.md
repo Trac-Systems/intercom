@@ -4,6 +4,10 @@ AxelNode is a custom-built Intercom node focused on Web3 safety and learning.
 
 ---
 
+## Screenshoot
+
+![Ap Running](image.png)
+
 ## 🔗 TRAC Address
 
 AxelNode Intercom Identity:
@@ -28,4 +32,4 @@ Replace the placeholder above with your official Trac peer address.
 ## 📦 Installation
 
 ```bash
-npm install
+npm start
