@@ -1,14 +1,9 @@
 {
   "name": "axelnode-intercom",
   "version": "1.0.0",
-  "description": "AxelNode - Web3 AI Education Intercom Node",
-  "type": "module",
+  "description": "AxelNode CLI Web3 Education Bot",
   "main": "index.js",
   "scripts": {
     "start": "node index.js"
-  },
-  "dependencies": {
-    "@tracsystems/intercom": "^1.0.0",
-    "@tracsystems/sidechannel": "^1.0.0"
   }
 }
