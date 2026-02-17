@@ -162,13 +162,18 @@
     .kitem .v{font-size:13px}
     .v strong{color:var(--accent2)}
     .v .big{font-size:14px;font-weight:800}
+
+    /* ==== COLLAPSIBLE (HIDE RAW) ==== */
+    details summary{ list-style:none; }
+    details summary::-webkit-details-marker{ display:none; }
+    details{ margin-top:6px; }
   </style>
 </head>
 <body>
   <div class="wrap">
     <div class="title"><span class="bolt">⚡</span> Intercom Dashboard Bot <span class="mini">(localhost)</span></div>
     <div class="sub">
-      Agent output auto-colored: SAFE (green), CAUTION (yellow), BLOCK (red).
+      Clean UI: Raw outputs hidden by default. SAFE (green), CAUTION (yellow), BLOCK (red).
     </div>
 
     <div class="grid">
@@ -223,8 +228,12 @@
         <button class="btn" id="tokenChartBtn">Load Token Chart (24h)</button>
         <div style="height:12px"></div>
         <canvas id="tokenChart"></canvas>
-        <div style="height:10px"></div>
-        <pre id="tokenChartMeta">{ "ok": true, "note": "Loads Dexscreener pair then GeckoTerminal OHLCV." }</pre>
+
+        <details>
+          <summary class="btn" style="display:inline-block">Show token chart debug</summary>
+          <div style="height:10px"></div>
+          <pre id="tokenChartMeta">{ "ok": true, "note": "Loads Dexscreener pair then GeckoTerminal OHLCV." }</pre>
+        </details>
       </div>
 
       <!-- AGENT + DEX -->
@@ -304,19 +313,31 @@
         <div style="height:12px"></div>
 
         <div class="label">Market Snapshot</div>
-        <pre id="dexBox">{ "ok": true, "note": "Click 'Check Dex' to fetch live market data." }</pre>
+        <details>
+          <summary class="btn" style="display:inline-block">Show market snapshot</summary>
+          <div style="height:10px"></div>
+          <pre id="dexBox">{ "ok": true, "note": "Click 'Check Dex' to fetch live market data." }</pre>
+        </details>
 
         <div style="height:12px"></div>
 
         <div class="label">Raw Agent JSON</div>
-        <pre id="agentBox">{ "ok": true, "note": "Click 'Run Agent' to generate signal + risk + decision." }</pre>
+        <details>
+          <summary class="btn" style="display:inline-block">Show raw agent output</summary>
+          <div style="height:10px"></div>
+          <pre id="agentBox">{ "ok": true, "note": "Click 'Run Agent' to generate signal + risk + decision." }</pre>
+        </details>
       </div>
 
       <!-- TX -->
       <div class="card">
         <div class="pill">Recent TX</div>
         <div class="hr"></div>
-        <pre id="txBox">{ "ok": true, "note": "Enter a wallet address then refresh." }</pre>
+        <details>
+          <summary class="btn" style="display:inline-block">Show raw TX</summary>
+          <div style="height:10px"></div>
+          <pre id="txBox">{ "ok": true, "note": "Enter a wallet address then refresh." }</pre>
+        </details>
       </div>
 
       <!-- SIMULATOR -->
@@ -408,7 +429,6 @@
       return "HOLD";
     }
     function signalToRiskLike(sig) {
-      // purely UI: BUY -> safe-ish, SELL -> caution, HOLD -> neutral
       const s = normalizeSignal(sig);
       if (s === "BUY") return "SAFE";
       if (s === "SELL") return "CAUTION";
@@ -582,10 +602,15 @@
       setPretty($("dexBox"), j);
     }
 
+    function escapeHtml(s){
+      return s.replace(/[&<>"']/g, (m) => ({
+        "&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#039;"
+      }[m]));
+    }
+
     function renderAgentSummary(j) {
-      // reset badges
       const mode = j?.mode || "—";
-      setBadge($("badgeMode"), `MODE: ${mode.toUpperCase()}`, "NEUTRAL");
+      setBadge($("badgeMode"), `MODE: ${String(mode).toUpperCase()}`, "NEUTRAL");
 
       const riskStatus = j?.agent?.risk?.status || "—";
       const signal = normalizeSignal(j?.agent?.signal);
@@ -608,7 +633,6 @@
       const checklist = Array.isArray(j?.agent?.risk?.checklist) ? j.agent.risk.checklist : [];
       $("sumChecklist").innerHTML = checklist.length ? `<ul style="margin:0;padding-left:18px">${checklist.map(x=>`<li>${escapeHtml(String(x))}</li>`).join("")}</ul>` : "—";
 
-      // warning box
       const warn = $("warnBox");
       const warnText = $("warnText");
       if (String(riskStatus).toUpperCase() === "BLOCK") {
@@ -620,22 +644,12 @@
       }
     }
 
-    function escapeHtml(s){
-      return s.replace(/[&<>"']/g, (m) => ({
-        "&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#039;"
-      }[m]));
-    }
-
     async function runAgent() {
       const q = $("tokenQ").value.trim();
       if (!q) return setPretty($("agentBox"), { ok:false, error:"Enter token symbol or CA" });
 
       const j = await getJSON(`/api/agent/analyze?q=${encodeURIComponent(q)}`);
-
-      // UI render
       renderAgentSummary(j);
-
-      // raw json
       setPretty($("agentBox"), j);
     }
 
