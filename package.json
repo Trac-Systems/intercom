@@ -1,13 +1,21 @@
 {
-  "name": "contract-test-latest",
-  "version": "0.0.1",
+  "name": "intercom_by_grimore8",
+  "version": "1.0.0",
   "type": "module",
   "main": "index.js",
+
+  "scripts": {
+    "start": "node index.js",
+    "dashboard": "node server.js"
+  },
+
   "pear": {
-    "name": "contract-test-latest",
+    "name": "intercom_by_grimore8",
     "type": "terminal"
   },
+
   "dependencies": {
+    "express": "^4.19.2",
     "b4a": "^1.6.7",
     "bare-ws": "2.0.3",
     "compact-encoding": "^2.18.0",
@@ -20,6 +28,7 @@
     "trac-wallet": "1.0.1",
     "util": "npm:bare-node-util"
   },
+
   "overrides": {
     "trac-wallet": "1.0.1"
   }
