@@ -6,18 +6,9 @@
   <title>⚡ Intercom Dashboard Bot</title>
   <style>
     :root{
-      --bg:#071018;
-      --panel:#0b1a24;
-      --panel2:#07151f;
-      --line:#143245;
-      --text:#d7f7ff;
-      --muted:#8ab3c2;
-      --accent:#4ff7c8;
-      --accent2:#4aa3ff;
-      --warn:#ffce4a;
-      --bad:#ff5b6b;
-      --shadow: 0 12px 30px rgba(0,0,0,.35);
-      --radius: 18px;
+      --bg:#071018; --line:#143245; --text:#d7f7ff; --muted:#8ab3c2;
+      --accent:#4ff7c8; --accent2:#4aa3ff; --warn:#ffce4a; --bad:#ff5b6b;
+      --shadow: 0 12px 30px rgba(0,0,0,.35); --radius: 18px;
       --mono: ui-monospace,SFMono-Regular,Menlo,Monaco,Consolas,"Liberation Mono","Courier New",monospace;
     }
     *{box-sizing:border-box}
@@ -30,12 +21,8 @@
       font-family: var(--mono);
       letter-spacing:.2px;
     }
-    .wrap{max-width:900px;margin:18px auto;padding:16px}
-    .title{
-      font-size:28px;font-weight:800;
-      display:flex;gap:10px;align-items:center;
-      margin:6px 0 14px;
-    }
+    .wrap{max-width:940px;margin:18px auto;padding:16px}
+    .title{font-size:28px;font-weight:900;display:flex;gap:10px;align-items:center;margin:6px 0 14px}
     .title .bolt{color:var(--warn)}
     .sub{color:var(--muted);margin-bottom:14px}
     .grid{display:grid;grid-template-columns:1fr;gap:14px}
@@ -45,60 +32,45 @@
       border-radius:var(--radius);
       box-shadow: var(--shadow);
       padding:14px;
-      position:relative;
-      overflow:hidden;
+      position:relative; overflow:hidden;
     }
     .card:before{
       content:"";
       position:absolute;inset:-2px;
       background: radial-gradient(600px 180px at 30% 0%, rgba(79,247,200,.12), transparent 60%),
                   radial-gradient(600px 180px at 80% 0%, rgba(74,163,255,.10), transparent 60%);
-      pointer-events:none;
-      opacity:.9;
+      pointer-events:none; opacity:.9;
     }
     .card > *{position:relative}
     .row{display:flex;gap:12px;flex-wrap:wrap;align-items:center;justify-content:space-between}
     .pill{
       display:inline-flex;gap:8px;align-items:center;
       padding:10px 12px;border:1px solid rgba(20,50,69,.85);
-      border-radius:999px;background:rgba(7,21,31,.6);
-      color:var(--text);
+      border-radius:999px;background:rgba(7,21,31,.6); color:var(--text);
     }
     .pill strong{color:var(--accent)}
     .btn{
-      cursor:pointer;
-      padding:10px 14px;border-radius:12px;
-      border:1px solid rgba(20,50,69,.9);
-      background:rgba(7,21,31,.65);
-      color:var(--text);
-      font-family:var(--mono);
+      cursor:pointer; padding:10px 14px;border-radius:12px;
+      border:1px solid rgba(20,50,69,.9); background:rgba(7,21,31,.65);
+      color:var(--text); font-family:var(--mono);
     }
     .btn:hover{border-color:rgba(79,247,200,.55)}
     .mini{color:var(--muted);font-size:12px}
     .label{color:var(--muted);font-size:12px;margin-bottom:6px}
     input{
-      width:100%;
-      padding:12px 12px;
-      border-radius:14px;
-      border:1px solid rgba(20,50,69,.85);
-      background:rgba(7,21,31,.72);
-      color:var(--text);
-      font-family:var(--mono);
-      outline:none;
+      width:100%; padding:12px 12px;border-radius:14px;
+      border:1px solid rgba(20,50,69,.85); background:rgba(7,21,31,.72);
+      color:var(--text); font-family:var(--mono); outline:none;
     }
     input:focus{border-color:rgba(79,247,200,.6)}
     .two{display:grid;grid-template-columns:1fr 1fr;gap:12px}
     @media (max-width:720px){ .two{grid-template-columns:1fr} }
     .hr{height:1px;background:rgba(20,50,69,.8);margin:12px 0}
     pre{
-      margin:0;
-      padding:12px;
-      border-radius:14px;
-      border:1px solid rgba(20,50,69,.85);
-      background:rgba(7,21,31,.75);
-      color:var(--text);
-      overflow:auto;
-      line-height:1.35;
+      margin:0; padding:12px; border-radius:14px;
+      border:1px solid rgba(20,50,69,.85); background:rgba(7,21,31,.75);
+      color:var(--text); overflow:auto; line-height:1.35;
+      white-space:pre-wrap;
     }
     .ok{color:var(--accent)}
     .bad{color:var(--bad)}
@@ -106,20 +78,23 @@
     .accent2{color:var(--accent2)}
     .kpi{font-size:14px}
     .kpi strong{color:var(--accent)}
-    .right{display:flex;gap:10px;align-items:center}
+    code{color:var(--accent2)}
   </style>
 </head>
 <body>
   <div class="wrap">
     <div class="title"><span class="bolt">⚡</span> Intercom Dashboard Bot <span class="mini">(localhost)</span></div>
-    <div class="sub">Tip: set a better Solana RPC to avoid 429. This UI is rate-limited with cache by default.</div>
+    <div class="sub">
+      Pro tip: if you get <span class="warn">429</span>, set <code>SOL_RPC</code> to a provider & keep refresh interval (cache is enabled).
+    </div>
 
     <div class="grid">
 
+      <!-- WALLET -->
       <div class="card">
         <div class="row">
           <div class="pill kpi">SOL Balance: <strong id="solBal">—</strong> SOL</div>
-          <div class="right">
+          <div class="row" style="justify-content:flex-end">
             <div class="pill mini">Updated: <span id="updated">—</span></div>
             <button class="btn" id="refreshBtn">Refresh</button>
           </div>
@@ -127,26 +102,57 @@
         <div class="hr"></div>
         <div class="label">Wallet (Solana Public Key)</div>
         <input id="pubkey" placeholder="Paste your Solana address (public key)..." />
-        <div class="mini" style="margin-top:8px;color:var(--muted)">
-          TX list shows last signatures. If you see <span class="warn">429</span>, set <code>SOL_RPC</code> to a provider + keep refresh interval.
+        <div class="mini" style="margin-top:8px">
+          TX list shows last signatures. Cache prevents spam.
         </div>
       </div>
 
+      <!-- PRICES -->
       <div class="card">
         <div class="row">
           <div class="pill">Prices (USD): <span id="pricesLine">—</span></div>
         </div>
         <div class="hr"></div>
-        <div class="mini">Chart: CoinGecko 24h market_chart (placeholder text for lightweight mode).</div>
         <pre id="chartBox">Waiting price feed...</pre>
       </div>
 
+      <!-- ✅ AGENT + DEXSCREENER -->
+      <div class="card">
+        <div class="row">
+          <div class="pill">Agent Mode (Dexscreener)</div>
+          <div class="pill mini">Mode: <span id="agentMode">—</span></div>
+        </div>
+        <div class="hr"></div>
+
+        <div class="label">Token (symbol or CA)</div>
+        <input id="tokenQ" placeholder="e.g. BONK or 0x... (CA recommended)" />
+
+        <div style="height:10px"></div>
+
+        <div class="two">
+          <button class="btn" id="dexBtn">Check Dex</button>
+          <button class="btn" id="analyzeBtn">Run Agent</button>
+        </div>
+
+        <div style="height:12px"></div>
+
+        <div class="label">Market Snapshot</div>
+        <pre id="dexBox">{ "ok": true, "note": "Click 'Check Dex' to fetch live market data." }</pre>
+
+        <div style="height:12px"></div>
+
+        <div class="label">Agent Output</div>
+        <pre id="agentBox">{ "ok": true, "note": "Click 'Run Agent' to generate signal + risk + decision." }</pre>
+      </div>
+
+      <!-- TX -->
       <div class="card">
         <div class="pill">Recent TX</div>
         <div class="hr"></div>
         <pre id="txBox">{ "ok": true, "note": "Enter a wallet address then refresh." }</pre>
       </div>
 
+      <!-- SIMULATOR -->
       <div class="card">
         <div class="pill">Swap Simulator (x*y=k)</div>
         <div class="hr"></div>
@@ -188,11 +194,7 @@
   <script>
     const $ = (id) => document.getElementById(id);
 
-    const state = {
-      timer: null,
-      refreshing: false,
-      intervalMs: 20000
-    };
+    const state = { timer: null, refreshing: false, intervalMs: 20000 };
 
     function nowLocal() {
       const d = new Date();
@@ -200,15 +202,13 @@
       return `${d.getFullYear()}-${pad(d.getMonth()+1)}-${pad(d.getDate())} ${pad(d.getHours())}:${pad(d.getMinutes())}:${pad(d.getSeconds())}`;
     }
 
-    function setJSON(el, obj, tone="ok") {
-      const txt = JSON.stringify(obj, null, 2);
-      el.textContent = txt;
-      el.className = "";
-    }
-
     async function getJSON(url) {
       const r = await fetch(url);
       return await r.json();
+    }
+
+    function setPretty(el, obj) {
+      el.textContent = JSON.stringify(obj, null, 2);
     }
 
     function fmtPrice(n) {
@@ -240,17 +240,16 @@
         const sol = p.data.solana;
 
         $("pricesLine").innerHTML =
-          `<span class="accent2">bitcoin:</span> ${fmtPrice(btc.usd)} (${fmtPct(btc.usd_24h_change)}) | ` +
-          `<span class="accent2">ethereum:</span> ${fmtPrice(eth.usd)} (${fmtPct(eth.usd_24h_change)}) | ` +
-          `<span class="accent2">solana:</span> ${fmtPrice(sol.usd)} (${fmtPct(sol.usd_24h_change)})`;
+          `<span class="accent2">BTC</span> $${fmtPrice(btc.usd)} (${fmtPct(btc.usd_24h_change)}) | ` +
+          `<span class="accent2">ETH</span> $${fmtPrice(eth.usd)} (${fmtPct(eth.usd_24h_change)}) | ` +
+          `<span class="accent2">SOL</span> $${fmtPrice(sol.usd)} (${fmtPct(sol.usd_24h_change)})`;
 
         $("chartBox").textContent =
-          `BTC $${fmtPrice(btc.usd)} (${fmtPct(btc.usd_24h_change)})\n` +
-          `ETH $${fmtPrice(eth.usd)} (${fmtPct(eth.usd_24h_change)})\n` +
-          `SOL $${fmtPrice(sol.usd)} (${fmtPct(sol.usd_24h_change)})\n\n` +
-          `Note: For lightweight mode, chart is simplified text.\n` +
-          `You can extend to real canvas chart later.`;
-
+          `BTC: $${fmtPrice(btc.usd)} (${fmtPct(btc.usd_24h_change)})\n` +
+          `ETH: $${fmtPrice(eth.usd)} (${fmtPct(eth.usd_24h_change)})\n` +
+          `SOL: $${fmtPrice(sol.usd)} (${fmtPct(sol.usd_24h_change)})\n\n` +
+          `Lightweight mode: text chart.\n` +
+          `Extend to real canvas chart later if needed.`;
       } catch (e) {
         $("pricesLine").innerHTML = `<span class="bad">error</span>: ${String(e.message || e)}`;
         $("chartBox").textContent = `Price feed error: ${String(e.message || e)}`;
@@ -260,22 +259,18 @@
       if (pubkey) {
         try {
           const b = await getJSON(`/api/sol/balance?pubkey=${encodeURIComponent(pubkey)}`);
-          if (!b.ok) throw new Error(b.error || "balance error");
-          $("solBal").textContent = (typeof b.sol === "number" ? b.sol.toFixed(4) : "—");
-        } catch (e) {
-          $("solBal").textContent = "—";
-        }
+          $("solBal").textContent = b.ok && typeof b.sol === "number" ? b.sol.toFixed(4) : "—";
+        } catch { $("solBal").textContent = "—"; }
 
         try {
           const t = await getJSON(`/api/sol/tx?pubkey=${encodeURIComponent(pubkey)}`);
-          if (!t.ok) throw new Error(t.error || "tx error");
-          setJSON($("txBox"), t);
+          setPretty($("txBox"), t);
         } catch (e) {
-          setJSON($("txBox"), { ok:false, error: String(e.message || e) });
+          setPretty($("txBox"), { ok:false, error: String(e.message || e) });
         }
       } else {
         $("solBal").textContent = "—";
-        setJSON($("txBox"), { ok:true, note:"Enter a wallet address then refresh." });
+        setPretty($("txBox"), { ok:true, note:"Enter a wallet address then refresh." });
       }
 
       state.refreshing = false;
@@ -289,17 +284,33 @@
           amountIn: Number($("ain").value),
           feeBps: Number($("fee").value)
         };
-
         const r = await fetch("/api/simulate", {
           method: "POST",
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify(payload)
         });
         const j = await r.json();
-        setJSON($("simBox"), j);
+        setPretty($("simBox"), j);
       } catch (e) {
-        setJSON($("simBox"), { ok:false, error: String(e.message || e) });
+        setPretty($("simBox"), { ok:false, error: String(e.message || e) });
       }
+    }
+
+    async function checkDex() {
+      const q = $("tokenQ").value.trim();
+      if (!q) return setPretty($("dexBox"), { ok:false, error:"Enter token symbol or CA" });
+
+      const j = await getJSON(`/api/dex?q=${encodeURIComponent(q)}`);
+      setPretty($("dexBox"), j);
+    }
+
+    async function runAgent() {
+      const q = $("tokenQ").value.trim();
+      if (!q) return setPretty($("agentBox"), { ok:false, error:"Enter token symbol or CA" });
+
+      const j = await getJSON(`/api/agent/analyze?q=${encodeURIComponent(q)}`);
+      $("agentMode").textContent = j?.mode || "—";
+      setPretty($("agentBox"), j);
     }
 
     // Init
@@ -308,8 +319,9 @@
 
     $("refreshBtn").addEventListener("click", refreshAll);
     $("simBtn").addEventListener("click", simulate);
+    $("dexBtn").addEventListener("click", checkDex);
+    $("analyzeBtn").addEventListener("click", runAgent);
 
-    // Gentle auto refresh
     refreshAll();
     state.timer = setInterval(refreshAll, state.intervalMs);
   </script>
