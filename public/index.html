@@ -10,6 +10,13 @@
       --accent:#4ff7c8; --accent2:#4aa3ff; --warn:#ffce4a; --bad:#ff5b6b;
       --shadow: 0 12px 30px rgba(0,0,0,.35); --radius: 18px;
       --mono: ui-monospace,SFMono-Regular,Menlo,Monaco,Consolas,"Liberation Mono","Courier New",monospace;
+
+      --safe:#4ff7c8;
+      --caution:#ffce4a;
+      --block:#ff5b6b;
+      --neutral:#4aa3ff;
+      --cardbg: rgba(7,21,31,.65);
+      --cardbg2: rgba(7,21,31,.75);
     }
     *{box-sizing:border-box}
     body{
@@ -79,18 +86,89 @@
       border:1px solid rgba(20,50,69,.85);
       background:rgba(7,21,31,.65);
     }
-    code{color:var(--accent2)}
-    .ok{color:var(--accent)}
-    .bad{color:var(--bad)}
-    .warn{color:var(--warn)}
-    .accent2{color:var(--accent2)}
+
+    /* ==== STATUS UI ==== */
+    .badge{
+      display:inline-flex;
+      align-items:center;
+      gap:8px;
+      padding:8px 10px;
+      border-radius:999px;
+      border:1px solid rgba(20,50,69,.85);
+      background: var(--cardbg);
+      font-size:12px;
+      line-height:1;
+      user-select:none;
+      white-space:nowrap;
+    }
+    .dot{
+      width:9px; height:9px; border-radius:50%;
+      background: var(--neutral);
+      box-shadow: 0 0 12px rgba(74,163,255,.35);
+    }
+    .badge.safe{border-color: rgba(79,247,200,.55)}
+    .badge.safe .dot{background: var(--safe); box-shadow:0 0 12px rgba(79,247,200,.45)}
+    .badge.caution{border-color: rgba(255,206,74,.55)}
+    .badge.caution .dot{background: var(--caution); box-shadow:0 0 12px rgba(255,206,74,.45)}
+    .badge.block{border-color: rgba(255,91,107,.60)}
+    .badge.block .dot{background: var(--block); box-shadow:0 0 12px rgba(255,91,107,.45)}
+    .badge.neutral .dot{background: var(--neutral)}
+
+    .panel{
+      border:1px solid rgba(20,50,69,.85);
+      background: var(--cardbg2);
+      border-radius: 16px;
+      padding:12px;
+    }
+
+    .warningBox{
+      border-radius:16px;
+      padding:12px;
+      border:1px solid rgba(255,91,107,.60);
+      background: rgba(255,91,107,.10);
+      display:none;
+    }
+    .warningBox.show{display:block;}
+    .warningTitle{
+      display:flex; align-items:center; gap:10px;
+      font-weight:800;
+      color: var(--bad);
+      margin-bottom:6px;
+    }
+    .warningTitle span{
+      width:22px;height:22px;border-radius:8px;
+      display:inline-grid;place-items:center;
+      background: rgba(255,91,107,.18);
+      border:1px solid rgba(255,91,107,.55);
+    }
+
+    .kv{
+      display:grid;
+      grid-template-columns: 1fr;
+      gap:10px;
+    }
+    @media (min-width:820px){
+      .kv{grid-template-columns: 1fr 1fr 1fr}
+    }
+
+    .kitem{
+      border:1px solid rgba(20,50,69,.85);
+      background: rgba(7,21,31,.55);
+      border-radius: 16px;
+      padding:10px 12px;
+      min-height: 66px;
+    }
+    .kitem .k{font-size:11px;color:var(--muted);margin-bottom:6px}
+    .kitem .v{font-size:13px}
+    .v strong{color:var(--accent2)}
+    .v .big{font-size:14px;font-weight:800}
   </style>
 </head>
 <body>
   <div class="wrap">
     <div class="title"><span class="bolt">⚡</span> Intercom Dashboard Bot <span class="mini">(localhost)</span></div>
     <div class="sub">
-      Chart: CoinGecko 24h market_chart → rendered on Canvas. (No libs, super light)
+      Agent output auto-colored: SAFE (green), CAUTION (yellow), BLOCK (red).
     </div>
 
     <div class="grid">
@@ -128,16 +206,40 @@
         <div class="hr"></div>
         <canvas id="chart"></canvas>
         <div class="mini" style="margin-top:8px">
-          Tip: switch asset → Load Chart.
+          CoinGecko 24h market_chart → Canvas line chart.
         </div>
       </div>
 
-      <!-- AGENT + DEXSCREENER -->
+      <!-- TOKEN CHART -->
+      <div class="card">
+        <div class="row">
+          <div class="pill">Token Chart (Dex → OHLCV)</div>
+          <div class="pill mini">Tip: CA recommended</div>
+        </div>
+        <div class="hr"></div>
+        <div class="label">Token (symbol or CA)</div>
+        <input id="tokenChartQ" placeholder="e.g. BONK or 0x... (CA is best)" />
+        <div style="height:10px"></div>
+        <button class="btn" id="tokenChartBtn">Load Token Chart (24h)</button>
+        <div style="height:12px"></div>
+        <canvas id="tokenChart"></canvas>
+        <div style="height:10px"></div>
+        <pre id="tokenChartMeta">{ "ok": true, "note": "Loads Dexscreener pair then GeckoTerminal OHLCV." }</pre>
+      </div>
+
+      <!-- AGENT + DEX -->
       <div class="card">
         <div class="row">
           <div class="pill">Agent Mode (Dexscreener)</div>
-          <div class="pill mini">Mode: <span id="agentMode">—</span></div>
+
+          <div class="row" style="gap:10px;justify-content:flex-end">
+            <span class="badge neutral" id="badgeMode"><span class="dot"></span><span id="agentMode">—</span></span>
+            <span class="badge neutral" id="badgeRisk"><span class="dot"></span><span id="riskText">RISK: —</span></span>
+            <span class="badge neutral" id="badgeSignal"><span class="dot"></span><span id="signalText">SIGNAL: —</span></span>
+            <span class="badge neutral" id="badgeDecision"><span class="dot"></span><span id="decisionText">DECISION: —</span></span>
+          </div>
         </div>
+
         <div class="hr"></div>
 
         <div class="label">Token (symbol or CA)</div>
@@ -152,12 +254,61 @@
 
         <div style="height:12px"></div>
 
+        <!-- Warning / danger box -->
+        <div class="warningBox" id="warnBox">
+          <div class="warningTitle"><span>!</span> High Risk Detected</div>
+          <div class="mini" id="warnText">—</div>
+        </div>
+
+        <div style="height:12px"></div>
+
+        <div class="label">Agent Summary</div>
+        <div class="panel">
+          <div class="kv">
+            <div class="kitem">
+              <div class="k">Signal</div>
+              <div class="v"><span class="big" id="sumSignal">—</span></div>
+            </div>
+            <div class="kitem">
+              <div class="k">Risk Status</div>
+              <div class="v"><span class="big" id="sumRisk">—</span></div>
+            </div>
+            <div class="kitem">
+              <div class="k">Decision</div>
+              <div class="v"><span class="big" id="sumDecision">—</span></div>
+            </div>
+          </div>
+
+          <div class="hr"></div>
+
+          <div class="kitem" style="min-height:auto">
+            <div class="k">Why</div>
+            <div class="v" id="sumWhy">—</div>
+          </div>
+
+          <div style="height:10px"></div>
+
+          <div class="kitem" style="min-height:auto">
+            <div class="k">Flags</div>
+            <div class="v" id="sumFlags">—</div>
+          </div>
+
+          <div style="height:10px"></div>
+
+          <div class="kitem" style="min-height:auto">
+            <div class="k">Checklist</div>
+            <div class="v" id="sumChecklist">—</div>
+          </div>
+        </div>
+
+        <div style="height:12px"></div>
+
         <div class="label">Market Snapshot</div>
         <pre id="dexBox">{ "ok": true, "note": "Click 'Check Dex' to fetch live market data." }</pre>
 
         <div style="height:12px"></div>
 
-        <div class="label">Agent Output</div>
+        <div class="label">Raw Agent JSON</div>
         <pre id="agentBox">{ "ok": true, "note": "Click 'Run Agent' to generate signal + risk + decision." }</pre>
       </div>
 
@@ -238,11 +389,35 @@
       return `${sign}${n.toFixed(2)}%`;
     }
 
+    // ---- Status badge helpers ----
+    function badgeClassFromStatus(status) {
+      const s = String(status || "").toUpperCase();
+      if (s === "SAFE") return "safe";
+      if (s === "CAUTION") return "caution";
+      if (s === "BLOCK") return "block";
+      return "neutral";
+    }
+    function setBadge(el, text, status) {
+      el.classList.remove("safe","caution","block","neutral");
+      el.classList.add("badge", badgeClassFromStatus(status));
+      el.querySelector("span:last-child").textContent = text;
+    }
+    function normalizeSignal(sig) {
+      const s = String(sig || "").toUpperCase();
+      if (s === "BUY" || s === "SELL" || s === "HOLD") return s;
+      return "HOLD";
+    }
+    function signalToRiskLike(sig) {
+      // purely UI: BUY -> safe-ish, SELL -> caution, HOLD -> neutral
+      const s = normalizeSignal(sig);
+      if (s === "BUY") return "SAFE";
+      if (s === "SELL") return "CAUTION";
+      return "NEUTRAL";
+    }
+
     // ---- Canvas chart (simple line) ----
     function drawLineChart(canvas, points, label) {
       const ctx = canvas.getContext("2d");
-
-      // crisp on mobile
       const dpr = window.devicePixelRatio || 1;
       const rect = canvas.getBoundingClientRect();
       canvas.width = Math.floor(rect.width * dpr);
@@ -252,13 +427,11 @@
       const w = rect.width;
       const h = rect.height;
 
-      // background grid
       ctx.clearRect(0, 0, w, h);
-      ctx.globalAlpha = 1;
 
+      // grid
       ctx.strokeStyle = "rgba(20,50,69,.65)";
       ctx.lineWidth = 1;
-
       for (let i = 1; i <= 5; i++) {
         const y = (h * i) / 6;
         ctx.beginPath();
@@ -274,7 +447,9 @@
         return;
       }
 
-      const vals = points.map(p => p[1]);
+      const vals = points.map(p => p[1]).filter(v => Number.isFinite(v));
+      if (vals.length < 2) return;
+
       const min = Math.min(...vals);
       const max = Math.max(...vals);
       const pad = (max - min) * 0.05 || 1;
@@ -301,7 +476,7 @@
       const last = points[points.length - 1][1];
       ctx.fillText(`${label}  24h`, 16, 18);
       ctx.fillText(`last: $${fmtPrice(last)}`, 16, h - 10);
-      ctx.fillText(`min: $${fmtPrice(min)}  max: $${fmtPrice(max)}`, w - 250, h - 10);
+      ctx.fillText(`min: $${fmtPrice(min)}  max: $${fmtPrice(max)}`, Math.max(16, w - 260), h - 10);
     }
 
     async function loadChart() {
@@ -315,6 +490,24 @@
       drawLineChart($("chart"), c.prices, label);
     }
 
+    async function loadTokenChart() {
+      const q = $("tokenChartQ").value.trim();
+      if (!q) {
+        setPretty($("tokenChartMeta"), { ok:false, error:"Enter token symbol or CA" });
+        drawLineChart($("tokenChart"), [], "TOKEN");
+        return;
+      }
+      const j = await getJSON(`/api/token_chart?q=${encodeURIComponent(q)}`);
+      setPretty($("tokenChartMeta"), j);
+
+      if (!j.ok || !Array.isArray(j.closes) || j.closes.length < 2) {
+        drawLineChart($("tokenChart"), [], "TOKEN");
+        return;
+      }
+      const label = `${j.dex?.symbol || "TOKEN"} (${j.dex?.chain || "chain"})`;
+      drawLineChart($("tokenChart"), j.closes, label);
+    }
+
     async function refreshAll() {
       if (state.refreshing) return;
       state.refreshing = true;
@@ -324,7 +517,7 @@
       const pubkey = $("pubkey").value.trim();
       localStorage.setItem("intercom_pubkey", pubkey);
 
-      // Prices line
+      // Prices
       try {
         const p = await getJSON("/api/prices");
         if (!p.ok) throw new Error(p.error || "prices error");
@@ -337,7 +530,7 @@
           `<span class="accent2">ETH</span> $${fmtPrice(eth.usd)} (${fmtPct(eth.usd_24h_change)}) | ` +
           `<span class="accent2">SOL</span> $${fmtPrice(sol.usd)} (${fmtPct(sol.usd_24h_change)})`;
       } catch (e) {
-        $("pricesLine").innerHTML = `<span class="bad">error</span>: ${String(e.message || e)}`;
+        $("pricesLine").innerHTML = `<span style="color:var(--bad)">error</span>: ${String(e.message || e)}`;
       }
 
       // Balance + TX
@@ -389,12 +582,60 @@
       setPretty($("dexBox"), j);
     }
 
+    function renderAgentSummary(j) {
+      // reset badges
+      const mode = j?.mode || "—";
+      setBadge($("badgeMode"), `MODE: ${mode.toUpperCase()}`, "NEUTRAL");
+
+      const riskStatus = j?.agent?.risk?.status || "—";
+      const signal = normalizeSignal(j?.agent?.signal);
+      const decision = j?.agent?.decision || "—";
+
+      setBadge($("badgeRisk"), `RISK: ${riskStatus}`, riskStatus);
+      setBadge($("badgeSignal"), `SIGNAL: ${signal}`, signalToRiskLike(signal));
+      setBadge($("badgeDecision"), `DECISION: ${decision}`, riskStatus);
+
+      $("sumRisk").textContent = riskStatus;
+      $("sumSignal").textContent = signal;
+      $("sumDecision").textContent = decision;
+
+      const why = Array.isArray(j?.agent?.why) ? j.agent.why : [];
+      $("sumWhy").innerHTML = why.length ? `<ul style="margin:0;padding-left:18px">${why.map(x=>`<li>${escapeHtml(String(x))}</li>`).join("")}</ul>` : "—";
+
+      const flags = Array.isArray(j?.agent?.risk?.flags) ? j.agent.risk.flags : [];
+      $("sumFlags").innerHTML = flags.length ? `<ul style="margin:0;padding-left:18px">${flags.map(x=>`<li>${escapeHtml(String(x))}</li>`).join("")}</ul>` : "—";
+
+      const checklist = Array.isArray(j?.agent?.risk?.checklist) ? j.agent.risk.checklist : [];
+      $("sumChecklist").innerHTML = checklist.length ? `<ul style="margin:0;padding-left:18px">${checklist.map(x=>`<li>${escapeHtml(String(x))}</li>`).join("")}</ul>` : "—";
+
+      // warning box
+      const warn = $("warnBox");
+      const warnText = $("warnText");
+      if (String(riskStatus).toUpperCase() === "BLOCK") {
+        warn.classList.add("show");
+        warnText.textContent = flags.length ? flags.join(" | ") : "Risk is BLOCK. Avoid trading.";
+      } else {
+        warn.classList.remove("show");
+        warnText.textContent = "—";
+      }
+    }
+
+    function escapeHtml(s){
+      return s.replace(/[&<>"']/g, (m) => ({
+        "&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#039;"
+      }[m]));
+    }
+
     async function runAgent() {
       const q = $("tokenQ").value.trim();
       if (!q) return setPretty($("agentBox"), { ok:false, error:"Enter token symbol or CA" });
 
       const j = await getJSON(`/api/agent/analyze?q=${encodeURIComponent(q)}`);
-      $("agentMode").textContent = j?.mode || "—";
+
+      // UI render
+      renderAgentSummary(j);
+
+      // raw json
       setPretty($("agentBox"), j);
     }
 
@@ -410,10 +651,12 @@
     $("chartBtn").addEventListener("click", loadChart);
     $("coinSel").addEventListener("change", loadChart);
 
+    $("tokenChartBtn").addEventListener("click", loadTokenChart);
+
     refreshAll();
     loadChart();
     state.timer = setInterval(refreshAll, state.intervalMs);
-    window.addEventListener("resize", () => loadChart());
+    window.addEventListener("resize", () => { loadChart(); loadTokenChart(); });
   </script>
 </body>
 </html>
