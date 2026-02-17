@@ -1,533 +1,522 @@
-/** @typedef {import('pear-interface')} */
-import fs from 'fs';
-import path from 'path';
-import b4a from 'b4a';
-import PeerWallet from 'trac-wallet';
-import { Peer, Wallet, createConfig as createPeerConfig, ENV as PEER_ENV } from 'trac-peer';
-import { MainSettlementBus } from 'trac-msb/src/index.js';
-import { createConfig as createMsbConfig, ENV as MSB_ENV } from 'trac-msb/src/config/env.js';
-import { ensureTextCodecs } from 'trac-peer/src/textCodec.js';
-import { getPearRuntime, ensureTrailingSlash } from 'trac-peer/src/runnerArgs.js';
-import { Terminal } from 'trac-peer/src/terminal/index.js';
-import SampleProtocol from './contract/protocol.js';
-import SampleContract from './contract/contract.js';
-import { Timer } from './features/timer/index.js';
-import Sidechannel from './features/sidechannel/index.js';
-import ScBridge from './features/sc-bridge/index.js';
+import readline from "readline";
 
-const { env, storeLabel, flags } = getPearRuntime();
+/**
+ * INTERCOM_BY_GAMBER8 — Pro CLI
+ * - Agent Mode (Real Data) + Q&A
+ * - Swap Link Generator (Jupiter / 1inch)
+ * - Risk Check (Real Data)
+ *
+ * Optional AI:
+ *   export GROQ_API_KEY="..."
+ *   export GROQ_MODEL="llama-3.3-70b-versatile"
+ */
 
-const peerStoreNameRaw =
-  (flags['peer-store-name'] && String(flags['peer-store-name'])) ||
-  env.PEER_STORE_NAME ||
-  storeLabel ||
-  'peer';
+// ========= CLI =========
+const rl = readline.createInterface({ input: process.stdin, output: process.stdout });
+const ask = (q) => new Promise((res) => rl.question(q, (a) => res((a ?? "").trim())));
 
-const peerStoresDirectory = ensureTrailingSlash(
-  (flags['peer-stores-directory'] && String(flags['peer-stores-directory'])) ||
-    env.PEER_STORES_DIRECTORY ||
-    'stores/'
-);
-
-const msbStoreName =
-  (flags['msb-store-name'] && String(flags['msb-store-name'])) ||
-  env.MSB_STORE_NAME ||
-  `${peerStoreNameRaw}-msb`;
-
-const msbStoresDirectory = ensureTrailingSlash(
-  (flags['msb-stores-directory'] && String(flags['msb-stores-directory'])) ||
-    env.MSB_STORES_DIRECTORY ||
-    'stores/'
-);
-
-const subnetChannel =
-  (flags['subnet-channel'] && String(flags['subnet-channel'])) ||
-  env.SUBNET_CHANNEL ||
-  'trac-peer-subnet';
-
-const sidechannelsRaw =
-  (flags['sidechannels'] && String(flags['sidechannels'])) ||
-  (flags['sidechannel'] && String(flags['sidechannel'])) ||
-  env.SIDECHANNELS ||
-  '';
-
-const parseBool = (value, fallback) => {
-  if (value === undefined || value === null || value === '') return fallback;
-  return ['1', 'true', 'yes', 'on'].includes(String(value).trim().toLowerCase());
+// ========= UI Helpers =========
+const C = {
+  reset: "\x1b[0m",
+  dim: "\x1b[2m",
+  bold: "\x1b[1m",
+  green: "\x1b[32m",
+  yellow: "\x1b[33m",
+  red: "\x1b[31m",
+  cyan: "\x1b[36m",
+  mag: "\x1b[35m",
 };
 
-const parseKeyValueList = (raw) => {
-  if (!raw) return [];
-  return String(raw)
-    .split(',')
-    .map((entry) => String(entry || '').trim())
-    .filter((entry) => entry.length > 0)
-    .map((entry) => {
-      const idx = entry.indexOf(':');
-      const alt = entry.indexOf('=');
-      const splitAt = idx >= 0 ? idx : alt;
-      if (splitAt <= 0) return null;
-      const key = entry.slice(0, splitAt).trim();
-      const value = entry.slice(splitAt + 1).trim();
-      if (!key || !value) return null;
-      return [key, value];
-    })
-    .filter(Boolean);
-};
+function hr() {
+  console.log(`${C.dim}────────────────────────────────────────${C.reset}`);
+}
+function title(t) {
+  hr();
+  console.log(`${C.bold}${C.cyan}${t}${C.reset}`);
+  hr();
+}
+function badge(text, type = "info") {
+  const color = type === "ok" ? C.green : type === "warn" ? C.yellow : type === "bad" ? C.red : C.cyan;
+  return `${color}${C.bold}${text}${C.reset}`;
+}
+function line(k, v) {
+  console.log(`${C.dim}${k}:${C.reset} ${v}`);
+}
+function fmtUSD(n) {
+  const x = Number(n);
+  if (!Number.isFinite(x)) return "N/A";
+  if (x >= 1_000_000_000) return `$${(x / 1_000_000_000).toFixed(2)}B`;
+  if (x >= 1_000_000) return `$${(x / 1_000_000).toFixed(2)}M`;
+  if (x >= 1_000) return `$${(x / 1_000).toFixed(2)}K`;
+  return `$${x.toFixed(2)}`;
+}
 
-const parseCsvList = (raw) => {
-  if (!raw) return null;
-  return String(raw)
-    .split(',')
-    .map((value) => value.trim())
-    .filter((value) => value.length > 0);
-};
+// ========= Groq (Optional) =========
+function createLLM() {
+  const apiKey = process.env.GROQ_API_KEY;
+  if (!apiKey) return null;
 
-const parseWelcomeValue = (raw) => {
-  if (!raw) return null;
-  let text = String(raw || '').trim();
-  if (!text) return null;
-  if (text.startsWith('@')) {
-    try {
-      const filePath = path.resolve(text.slice(1));
-      text = String(fs.readFileSync(filePath, 'utf8') || '').trim();
-      if (!text) return null;
-    } catch (_e) {
-      return null;
-    }
-  }
-  if (text.startsWith('b64:')) text = text.slice(4);
-  if (text.startsWith('{')) {
+  const baseURL = "https://api.groq.com/openai/v1";
+  const model = process.env.GROQ_MODEL || "llama-3.3-70b-versatile";
+
+  async function json(system, user) {
+    const res = await fetch(`${baseURL}/chat/completions`, {
+      method: "POST",
+      headers: {
+        Authorization: `Bearer ${apiKey}`,
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify({
+        model,
+        temperature: 0.2,
+        messages: [
+          { role: "system", content: system + "\nReturn STRICT JSON only. No markdown." },
+          { role: "user", content: user },
+        ],
+      }),
+    });
+
+    const data = await res.json();
+    const text = data?.choices?.[0]?.message?.content || "{}";
+
+    // defensive JSON parse
     try {
       return JSON.parse(text);
-    } catch (_e) {
-      return null;
+    } catch {
+      const s = text.indexOf("{");
+      const e = text.lastIndexOf("}");
+      if (s !== -1 && e !== -1) {
+        try {
+          return JSON.parse(text.slice(s, e + 1));
+        } catch {}
+      }
+      return {};
     }
   }
+
+  return { json };
+}
+
+// ========= Dexscreener Real Data =========
+async function getTokenData(query) {
   try {
-    const decoded = b4a.toString(b4a.from(text, 'base64'));
-    return JSON.parse(decoded);
-  } catch (_e) {}
-  return null;
-};
-
-const sidechannelDebugRaw =
-  (flags['sidechannel-debug'] && String(flags['sidechannel-debug'])) ||
-  env.SIDECHANNEL_DEBUG ||
-  '';
-const sidechannelDebug = parseBool(sidechannelDebugRaw, false);
-const sidechannelQuietRaw =
-  (flags['sidechannel-quiet'] && String(flags['sidechannel-quiet'])) ||
-  env.SIDECHANNEL_QUIET ||
-  '';
-const sidechannelQuiet = parseBool(sidechannelQuietRaw, false);
-const sidechannelMaxBytesRaw =
-  (flags['sidechannel-max-bytes'] && String(flags['sidechannel-max-bytes'])) ||
-  env.SIDECHANNEL_MAX_BYTES ||
-  '';
-const sidechannelMaxBytes = Number.parseInt(sidechannelMaxBytesRaw, 10);
-const sidechannelAllowRemoteOpenRaw =
-  (flags['sidechannel-allow-remote-open'] && String(flags['sidechannel-allow-remote-open'])) ||
-  env.SIDECHANNEL_ALLOW_REMOTE_OPEN ||
-  '';
-const sidechannelAllowRemoteOpen = parseBool(sidechannelAllowRemoteOpenRaw, true);
-const sidechannelAutoJoinRaw =
-  (flags['sidechannel-auto-join'] && String(flags['sidechannel-auto-join'])) ||
-  env.SIDECHANNEL_AUTO_JOIN ||
-  '';
-const sidechannelAutoJoin = parseBool(sidechannelAutoJoinRaw, false);
-const sidechannelPowRaw =
-  (flags['sidechannel-pow'] && String(flags['sidechannel-pow'])) ||
-  env.SIDECHANNEL_POW ||
-  '';
-const sidechannelPowEnabled = parseBool(sidechannelPowRaw, true);
-const sidechannelPowDifficultyRaw =
-  (flags['sidechannel-pow-difficulty'] && String(flags['sidechannel-pow-difficulty'])) ||
-  env.SIDECHANNEL_POW_DIFFICULTY ||
-  '12';
-const sidechannelPowDifficulty = Number.parseInt(sidechannelPowDifficultyRaw, 10);
-const sidechannelPowEntryRaw =
-  (flags['sidechannel-pow-entry'] && String(flags['sidechannel-pow-entry'])) ||
-  env.SIDECHANNEL_POW_ENTRY ||
-  '';
-const sidechannelPowRequireEntry = parseBool(sidechannelPowEntryRaw, false);
-const sidechannelPowChannelsRaw =
-  (flags['sidechannel-pow-channels'] && String(flags['sidechannel-pow-channels'])) ||
-  env.SIDECHANNEL_POW_CHANNELS ||
-  '';
-const sidechannelPowChannels = sidechannelPowChannelsRaw
-  ? sidechannelPowChannelsRaw
-      .split(',')
-      .map((value) => value.trim())
-      .filter((value) => value.length > 0)
-  : null;
-const sidechannelInviteRequiredRaw =
-  (flags['sidechannel-invite-required'] && String(flags['sidechannel-invite-required'])) ||
-  env.SIDECHANNEL_INVITE_REQUIRED ||
-  '';
-const sidechannelInviteRequired = parseBool(sidechannelInviteRequiredRaw, false);
-const sidechannelInviteChannelsRaw =
-  (flags['sidechannel-invite-channels'] && String(flags['sidechannel-invite-channels'])) ||
-  env.SIDECHANNEL_INVITE_CHANNELS ||
-  '';
-const sidechannelInviteChannels = sidechannelInviteChannelsRaw
-  ? sidechannelInviteChannelsRaw
-      .split(',')
-      .map((value) => value.trim())
-      .filter((value) => value.length > 0)
-  : null;
-const sidechannelInvitePrefixesRaw =
-  (flags['sidechannel-invite-prefixes'] && String(flags['sidechannel-invite-prefixes'])) ||
-  env.SIDECHANNEL_INVITE_PREFIXES ||
-  '';
-const sidechannelInvitePrefixes = sidechannelInvitePrefixesRaw
-  ? sidechannelInvitePrefixesRaw
-      .split(',')
-      .map((value) => value.trim())
-      .filter((value) => value.length > 0)
-  : null;
-const sidechannelInviterKeysRaw =
-  (flags['sidechannel-inviter-keys'] && String(flags['sidechannel-inviter-keys'])) ||
-  env.SIDECHANNEL_INVITER_KEYS ||
-  '';
-const sidechannelInviterKeys = sidechannelInviterKeysRaw
-  ? sidechannelInviterKeysRaw
-      .split(',')
-      .map((value) => value.trim())
-      .filter((value) => value.length > 0)
-  : [];
-const sidechannelInviteTtlRaw =
-  (flags['sidechannel-invite-ttl'] && String(flags['sidechannel-invite-ttl'])) ||
-  env.SIDECHANNEL_INVITE_TTL ||
-  '604800';
-const sidechannelInviteTtlSec = Number.parseInt(sidechannelInviteTtlRaw, 10);
-const sidechannelInviteTtlMs = Number.isFinite(sidechannelInviteTtlSec)
-  ? Math.max(sidechannelInviteTtlSec, 0) * 1000
-  : 0;
-const sidechannelOwnerRaw =
-  (flags['sidechannel-owner'] && String(flags['sidechannel-owner'])) ||
-  env.SIDECHANNEL_OWNER ||
-  '';
-const sidechannelOwnerEntries = parseKeyValueList(sidechannelOwnerRaw);
-const sidechannelOwnerMap = new Map();
-for (const [channel, key] of sidechannelOwnerEntries) {
-  const normalizedKey = key.trim().toLowerCase();
-  if (channel && normalizedKey) sidechannelOwnerMap.set(channel.trim(), normalizedKey);
-}
-const sidechannelOwnerWriteOnlyRaw =
-  (flags['sidechannel-owner-write-only'] && String(flags['sidechannel-owner-write-only'])) ||
-  env.SIDECHANNEL_OWNER_WRITE_ONLY ||
-  '';
-const sidechannelOwnerWriteOnly = parseBool(sidechannelOwnerWriteOnlyRaw, false);
-const sidechannelOwnerWriteChannelsRaw =
-  (flags['sidechannel-owner-write-channels'] && String(flags['sidechannel-owner-write-channels'])) ||
-  env.SIDECHANNEL_OWNER_WRITE_CHANNELS ||
-  '';
-const sidechannelOwnerWriteChannels = sidechannelOwnerWriteChannelsRaw
-  ? sidechannelOwnerWriteChannelsRaw
-      .split(',')
-      .map((value) => value.trim())
-      .filter((value) => value.length > 0)
-  : null;
-const sidechannelWelcomeRaw =
-  (flags['sidechannel-welcome'] && String(flags['sidechannel-welcome'])) ||
-  env.SIDECHANNEL_WELCOME ||
-  '';
-const sidechannelWelcomeEntries = parseKeyValueList(sidechannelWelcomeRaw);
-const sidechannelWelcomeMap = new Map();
-for (const [channel, value] of sidechannelWelcomeEntries) {
-  const welcome = parseWelcomeValue(value);
-  if (channel && welcome) sidechannelWelcomeMap.set(channel.trim(), welcome);
-}
-const sidechannelWelcomeRequiredRaw =
-  (flags['sidechannel-welcome-required'] && String(flags['sidechannel-welcome-required'])) ||
-  env.SIDECHANNEL_WELCOME_REQUIRED ||
-  '';
-const sidechannelWelcomeRequired = parseBool(sidechannelWelcomeRequiredRaw, true);
-
-const sidechannelEntry = '0000intercom';
-const sidechannelExtras = sidechannelsRaw
-  .split(',')
-  .map((value) => value.trim())
-  .filter((value) => value.length > 0 && value !== sidechannelEntry);
-
-if (sidechannelWelcomeRequired && !sidechannelOwnerMap.has(sidechannelEntry)) {
-  console.warn(
-    `[sidechannel] welcome required for non-entry channels; entry "${sidechannelEntry}" is open and does not require owner/welcome.`
-  );
-}
-
-const subnetBootstrapHex =
-  (flags['subnet-bootstrap'] && String(flags['subnet-bootstrap'])) ||
-  env.SUBNET_BOOTSTRAP ||
-  null;
-
-const scBridgeEnabledRaw =
-  (flags['sc-bridge'] && String(flags['sc-bridge'])) ||
-  env.SC_BRIDGE ||
-  '';
-const scBridgeEnabled = parseBool(scBridgeEnabledRaw, false);
-const scBridgeHost =
-  (flags['sc-bridge-host'] && String(flags['sc-bridge-host'])) ||
-  env.SC_BRIDGE_HOST ||
-  '127.0.0.1';
-const scBridgePortRaw =
-  (flags['sc-bridge-port'] && String(flags['sc-bridge-port'])) ||
-  env.SC_BRIDGE_PORT ||
-  '';
-const scBridgePort = Number.parseInt(scBridgePortRaw, 10);
-const scBridgeFilter =
-  (flags['sc-bridge-filter'] && String(flags['sc-bridge-filter'])) ||
-  env.SC_BRIDGE_FILTER ||
-  '';
-const scBridgeFilterChannelRaw =
-  (flags['sc-bridge-filter-channel'] && String(flags['sc-bridge-filter-channel'])) ||
-  env.SC_BRIDGE_FILTER_CHANNEL ||
-  '';
-const scBridgeFilterChannels = scBridgeFilterChannelRaw
-  ? scBridgeFilterChannelRaw
-      .split(',')
-      .map((value) => value.trim())
-      .filter((value) => value.length > 0)
-  : null;
-const scBridgeToken =
-  (flags['sc-bridge-token'] && String(flags['sc-bridge-token'])) ||
-  env.SC_BRIDGE_TOKEN ||
-  '';
-const scBridgeCliRaw =
-  (flags['sc-bridge-cli'] && String(flags['sc-bridge-cli'])) ||
-  env.SC_BRIDGE_CLI ||
-  '';
-const scBridgeCliEnabled = parseBool(scBridgeCliRaw, false);
-const scBridgeDebugRaw =
-  (flags['sc-bridge-debug'] && String(flags['sc-bridge-debug'])) ||
-  env.SC_BRIDGE_DEBUG ||
-  '';
-const scBridgeDebug = parseBool(scBridgeDebugRaw, false);
-
-// Optional: override DHT bootstrap nodes (host:port list) for faster local tests.
-// Note: this affects all Hyperswarm joins (subnet replication + sidechannels).
-const peerDhtBootstrapRaw =
-  (flags['peer-dht-bootstrap'] && String(flags['peer-dht-bootstrap'])) ||
-  (flags['dht-bootstrap'] && String(flags['dht-bootstrap'])) ||
-  env.PEER_DHT_BOOTSTRAP ||
-  env.DHT_BOOTSTRAP ||
-  '';
-const peerDhtBootstrap = parseCsvList(peerDhtBootstrapRaw);
-const msbDhtBootstrapRaw =
-  (flags['msb-dht-bootstrap'] && String(flags['msb-dht-bootstrap'])) ||
-  env.MSB_DHT_BOOTSTRAP ||
-  '';
-const msbDhtBootstrap = parseCsvList(msbDhtBootstrapRaw);
-
-if (scBridgeEnabled && !scBridgeToken) {
-  throw new Error('SC-Bridge requires --sc-bridge-token (auth is mandatory).');
-}
-
-const readHexFile = (filePath, byteLength) => {
-  try {
-    if (fs.existsSync(filePath)) {
-      const hex = fs.readFileSync(filePath, 'utf8').trim().toLowerCase();
-      if (/^[0-9a-f]+$/.test(hex) && hex.length === byteLength * 2) return hex;
+    let url;
+    // detect CA (0x... or long string)
+    if ((query || "").startsWith("0x") || (query || "").length > 30) {
+      url = `https://api.dexscreener.com/latest/dex/tokens/${encodeURIComponent(query)}`;
+    } else {
+      url = `https://api.dexscreener.com/latest/dex/search?q=${encodeURIComponent(query)}`;
     }
-  } catch (_e) {}
+
+    const res = await fetch(url);
+    const data = await res.json();
+
+    if (!data?.pairs?.length) return null;
+
+    const p = data.pairs[0];
+    return {
+      name: p.baseToken?.name || "Unknown",
+      symbol: p.baseToken?.symbol || "Unknown",
+      pairAddress: p.pairAddress || "",
+      chain: p.chainId || "unknown",
+      dex: p.dexId || "unknown",
+      price: p.priceUsd || "N/A",
+      liquidity: p.liquidity?.usd || 0,
+      volume24h: p.volume?.h24 || 0,
+      fdv: p.fdv || 0,
+      url: p.url || "",
+    };
+  } catch {
+    return null;
+  }
+}
+
+// ========= Agents (Analyst + Risk Gate) =========
+async function analystAgent({ llm, chainHint, token, market }) {
+  // fallback rule-based
+  if (!llm) {
+    if (!market) {
+      return {
+        signal: "HOLD",
+        why: ["No Dexscreener data found.", "Try using a contract address (CA) for accuracy."],
+        questions: ["What is the token contract address (CA)?"],
+      };
+    }
+    const liq = Number(market.liquidity || 0);
+    const vol = Number(market.volume24h || 0);
+
+    // simple heuristic
+    let signal = "HOLD";
+    const why = [];
+
+    if (liq < 10000) {
+      why.push("Low liquidity → high slippage/manipulation risk.");
+      signal = "HOLD";
+    } else {
+      why.push("Liquidity looks acceptable for basic swaps.");
+    }
+
+    if (vol < 10000) {
+      why.push("Low 24h volume → weak confirmation.");
+      signal = "HOLD";
+    } else {
+      why.push("24h volume shows activity (still not a guarantee).");
+    }
+
+    why.push("Market conditions can change fast.");
+    return { signal, why: why.slice(0, 3), questions: [] };
+  }
+
+  const system = `
+You are Analyst Agent in an Intercom-style CLI.
+Return STRICT JSON with keys:
+signal ("BUY"|"SELL"|"HOLD"), why (max 3 bullets), questions (max 2).
+No hype, no promises.
+`.trim();
+
+  const user = `
+User input:
+chain_hint: ${chainHint}
+token: ${token}
+
+REAL market snapshot (Dexscreener):
+${JSON.stringify(market, null, 2)}
+
+Give a practical signal based on the snapshot.
+If critical info missing, ask 1-2 questions.
+`.trim();
+
+  const out = await llm.json(system, user);
+  return {
+    signal: out?.signal || "HOLD",
+    why: Array.isArray(out?.why) ? out.why.slice(0, 3) : [],
+    questions: Array.isArray(out?.questions) ? out.questions.slice(0, 2) : [],
+  };
+}
+
+async function riskGateAgent({ llm, chainHint, token, market, analystSignal }) {
+  // fallback rule-based
+  if (!llm) {
+    if (!market) {
+      return {
+        status: "CAUTION",
+        flags: ["No market data found.", "Risk can’t be verified automatically."],
+        checklist: ["Use CA to fetch correct token", "Check liquidity depth", "Check top holders", "Start very small"],
+      };
+    }
+
+    const liq = Number(market.liquidity || 0);
+    const vol = Number(market.volume24h || 0);
+    const flags = [];
+    let status = "SAFE";
+
+    if (liq < 5000) {
+      status = "BLOCK";
+      flags.push("Very low liquidity (high rug/slippage risk).");
+    } else if (liq < 20000) {
+      status = "CAUTION";
+      flags.push("Low-ish liquidity (slippage risk).");
+    }
+
+    if (vol < 5000) {
+      status = status === "BLOCK" ? "BLOCK" : "CAUTION";
+      flags.push("Very low 24h volume (easy to manipulate).");
+    }
+
+    if ((market.price || "N/A") === "N/A") {
+      status = status === "BLOCK" ? "BLOCK" : "CAUTION";
+      flags.push("Price data missing/unstable.");
+    }
+
+    if (analystSignal === "BUY" && status !== "BLOCK") {
+      flags.push("Even if BUY: use tight risk management.");
+    }
+
+    const checklist = [
+      "Verify contract is correct (CA)",
+      "Check liquidity lock / LP holders",
+      "Check top holders concentration",
+      "Test with tiny amount first",
+    ];
+
+    return { status, flags: flags.slice(0, 4), checklist: checklist.slice(0, 4) };
+  }
+
+  const system = `
+You are Risk Gate Agent in an Intercom-style CLI.
+Return STRICT JSON with keys:
+status ("SAFE"|"CAUTION"|"BLOCK"),
+flags (max 4),
+checklist (max 4).
+No markdown, keep it practical.
+`.trim();
+
+  const user = `
+User input:
+chain_hint: ${chainHint}
+token: ${token}
+analyst_signal: ${analystSignal}
+
+REAL market snapshot:
+${JSON.stringify(market, null, 2)}
+
+Decide risk status. If critical red flags -> BLOCK.
+`.trim();
+
+  const out = await llm.json(system, user);
+  return {
+    status: out?.status || "CAUTION",
+    flags: Array.isArray(out?.flags) ? out.flags.slice(0, 4) : [],
+    checklist: Array.isArray(out?.checklist) ? out.checklist.slice(0, 4) : [],
+  };
+}
+
+// ========= Swap Link Generator =========
+function makeSwapLink({ chain, fromToken, toToken, amount }) {
+  const c = (chain || "").toLowerCase();
+
+  // Solana Jupiter link (works with symbol too; best with mint)
+  if (["sol", "solana"].includes(c)) {
+    return `https://jup.ag/swap/${encodeURIComponent(fromToken)}-${encodeURIComponent(toToken)}?amount=${encodeURIComponent(
+      amount || ""
+    )}`;
+  }
+
+  // EVM: 1inch universal UI
+  // NOTE: user picks network in UI; this is safe and simple.
+  if (["eth", "ethereum", "bsc", "base", "arb", "arbitrum", "op", "optimism", "polygon"].includes(c)) {
+    return `https://app.1inch.io/#/${encodeURIComponent(fromToken)}/${encodeURIComponent(toToken)}`;
+  }
+
   return null;
-};
+}
 
-const subnetBootstrapFile = path.join(
-  peerStoresDirectory,
-  peerStoreNameRaw,
-  'subnet-bootstrap.hex'
-);
+// ========= Q&A Mode =========
+async function chatWithAgents({ llm, context }) {
+  title("Q&A MODE");
+  console.log(`${C.dim}Type your question. Type${C.reset} ${C.bold}exit${C.reset} ${C.dim}to go back.${C.reset}\n`);
 
-let subnetBootstrap = subnetBootstrapHex ? subnetBootstrapHex.trim().toLowerCase() : null;
-if (subnetBootstrap) {
-  if (!/^[0-9a-f]{64}$/.test(subnetBootstrap)) {
-    throw new Error('Invalid --subnet-bootstrap. Provide 32-byte hex (64 chars).');
+  while (true) {
+    const q = await ask(`${badge("YOU", "info")} `);
+    if (!q) continue;
+    if (q.toLowerCase() === "exit") break;
+
+    if (!llm) {
+      // fallback: answer from context with simple heuristics
+      const m = context?.market;
+      const a = context?.analyst;
+      const r = context?.risk;
+
+      console.log(`${badge("AGENT", "ok")} ${C.dim}(offline mode)${C.reset}`);
+      if (/why|kenapa|reason/i.test(q)) {
+        console.log(`- Signal: ${a?.signal || "HOLD"}`);
+        (a?.why || []).forEach((x) => console.log(`- ${x}`));
+      } else if (/risk|bahaya|flag/i.test(q)) {
+        console.log(`- Status: ${r?.status || "CAUTION"}`);
+        (r?.flags || []).forEach((x) => console.log(`- ${x}`));
+      } else if (/data|market|price|liq|volume/i.test(q)) {
+        if (!m) console.log("- No market data available.");
+        else {
+          console.log(`- ${m.name} (${m.symbol})`);
+          console.log(`- Price: ${m.price}`);
+          console.log(`- Liquidity: ${fmtUSD(m.liquidity)}`);
+          console.log(`- Volume 24h: ${fmtUSD(m.volume24h)}`);
+        }
+      } else {
+        console.log("- Ask about: why signal, risk flags, or market data.");
+        console.log("- Tip: use CA for accurate results.");
+      }
+      console.log("");
+      continue;
+    }
+
+    const system = `
+You are an Intercom-style assistant for a trading copilot CLI.
+Be concise. No hype. No financial guarantees.
+Answer based on the provided context only.
+`.trim();
+
+    const user = `
+Context JSON:
+${JSON.stringify(context, null, 2)}
+
+User question:
+${q}
+
+Answer in 3-8 short lines max.
+`.trim();
+
+    try {
+      // Use Groq but not JSON this time; we’ll call json() and wrap response
+      // We'll cheat by asking JSON with key "answer" to reuse strict parser.
+      const out = await llm.json(
+        system + "\nReturn STRICT JSON with key: answer (string).",
+        user + "\nReturn JSON: {\"answer\":\"...\"}"
+      );
+      const ans = out?.answer || "No answer.";
+      console.log(`${badge("AGENT", "ok")}\n${ans}\n`);
+    } catch {
+      console.log(`${badge("AGENT", "warn")} Could not answer right now.\n`);
+    }
   }
-} else {
-  subnetBootstrap = readHexFile(subnetBootstrapFile, 32);
 }
 
-const msbConfig = createMsbConfig(MSB_ENV.MAINNET, {
-  storeName: msbStoreName,
-  storesDirectory: msbStoresDirectory,
-  enableInteractiveMode: false,
-  dhtBootstrap: msbDhtBootstrap || undefined,
-});
+// ========= Modes =========
+async function runAgentMode() {
+  const llm = createLLM();
 
-const msbBootstrapHex = b4a.toString(msbConfig.bootstrap, 'hex');
-if (subnetBootstrap && subnetBootstrap === msbBootstrapHex) {
-  throw new Error('Subnet bootstrap cannot equal MSB bootstrap.');
-}
+  title("AGENT MODE — REAL DATA");
+  console.log(`${C.dim}Tip:${C.reset} Use ${C.bold}contract address (CA)${C.reset} for best accuracy.\n`);
 
-const peerConfig = createPeerConfig(PEER_ENV.MAINNET, {
-  storesDirectory: peerStoresDirectory,
-  storeName: peerStoreNameRaw,
-  bootstrap: subnetBootstrap || null,
-  channel: subnetChannel,
-  enableInteractiveMode: true,
-  enableBackgroundTasks: true,
-  enableUpdater: true,
-  replicate: true,
-  dhtBootstrap: peerDhtBootstrap || undefined,
-});
+  const chainHint = await ask("Chain hint (sol/eth/bsc/base) [optional]: ");
+  const token = await ask("Token (symbol or CA): ");
 
-const ensureKeypairFile = async (keyPairPath) => {
-  if (fs.existsSync(keyPairPath)) return;
-  fs.mkdirSync(path.dirname(keyPairPath), { recursive: true });
-  await ensureTextCodecs();
-  const wallet = new PeerWallet();
-  await wallet.ready;
-  if (!wallet.secretKey) {
-    await wallet.generateKeyPair();
+  console.log(`\n${badge("DATA", "info")} Fetching Dexscreener...`);
+  const market = await getTokenData(token);
+
+  if (!market) {
+    console.log(`${badge("WARN", "warn")} No Dexscreener pairs found.`);
+    console.log(`${C.dim}Try CA instead (0x...) or a more specific query.${C.reset}\n`);
+  } else {
+    title("MARKET SNAPSHOT");
+    line("Name", `${market.name} (${market.symbol})`);
+    line("Chain / DEX", `${market.chain} / ${market.dex}`);
+    line("Price", `${market.price}`);
+    line("Liquidity", `${fmtUSD(market.liquidity)}`);
+    line("Volume 24h", `${fmtUSD(market.volume24h)}`);
+    if (market.fdv) line("FDV", fmtUSD(market.fdv));
+    if (market.url) line("Dex URL", market.url);
+    hr();
+    console.log("");
   }
-  wallet.exportToFile(keyPairPath, b4a.alloc(0));
-};
 
-await ensureKeypairFile(msbConfig.keyPairPath);
-await ensureKeypairFile(peerConfig.keyPairPath);
-
-console.log('=============== STARTING MSB ===============');
-const msb = new MainSettlementBus(msbConfig);
-await msb.ready();
-
-console.log('=============== STARTING PEER ===============');
-const peer = new Peer({
-  config: peerConfig,
-  msb,
-  wallet: new Wallet(),
-  protocol: SampleProtocol,
-  contract: SampleContract,
-});
-await peer.ready();
-
-const effectiveSubnetBootstrapHex = peer.base?.key
-  ? peer.base.key.toString('hex')
-  : b4a.isBuffer(peer.config.bootstrap)
-      ? peer.config.bootstrap.toString('hex')
-      : String(peer.config.bootstrap ?? '').toLowerCase();
-
-if (!subnetBootstrap) {
-  fs.mkdirSync(path.dirname(subnetBootstrapFile), { recursive: true });
-  fs.writeFileSync(subnetBootstrapFile, `${effectiveSubnetBootstrapHex}\n`);
-}
-
-console.log('');
-console.log('====================INTERCOM ====================');
-const msbChannel = b4a.toString(msbConfig.channel, 'utf8');
-const msbStorePath = path.join(msbStoresDirectory, msbStoreName);
-const peerStorePath = path.join(peerStoresDirectory, peerStoreNameRaw);
-const peerWriterKey = peer.writerLocalKey ?? peer.base?.local?.key?.toString('hex') ?? null;
-console.log('MSB network bootstrap:', msbBootstrapHex);
-console.log('MSB channel:', msbChannel);
-console.log('MSB store:', msbStorePath);
-console.log('Peer store:', peerStorePath);
-if (Array.isArray(msbConfig?.dhtBootstrap) && msbConfig.dhtBootstrap.length > 0) {
-  console.log('MSB DHT bootstrap nodes:', msbConfig.dhtBootstrap.join(', '));
-}
-if (Array.isArray(peerConfig?.dhtBootstrap) && peerConfig.dhtBootstrap.length > 0) {
-  console.log('Peer DHT bootstrap nodes:', peerConfig.dhtBootstrap.join(', '));
-}
-console.log('Peer subnet bootstrap:', effectiveSubnetBootstrapHex);
-console.log('Peer subnet channel:', subnetChannel);
-console.log('Peer pubkey (hex):', peer.wallet.publicKey);
-console.log('Peer trac address (bech32m):', peer.wallet.address ?? null);
-console.log('Peer writer key (hex):', peerWriterKey);
-console.log('Sidechannel entry:', sidechannelEntry);
-if (sidechannelExtras.length > 0) {
-  console.log('Sidechannel extras:', sidechannelExtras.join(', '));
-}
-if (scBridgeEnabled) {
-  const portDisplay = Number.isSafeInteger(scBridgePort) ? scBridgePort : 49222;
-  console.log('SC-Bridge:', `ws://${scBridgeHost}:${portDisplay}`);
-}
-console.log('================================================================');
-console.log('');
-
-const admin = await peer.base.view.get('admin');
-if (admin && admin.value === peer.wallet.publicKey && peer.base.writable) {
-  const timer = new Timer(peer, { update_interval: 60_000 });
-  await peer.protocol.instance.addFeature('timer', timer);
-  timer.start().catch((err) => console.error('Timer feature stopped:', err?.message ?? err));
-}
-
-let scBridge = null;
-if (scBridgeEnabled) {
-  scBridge = new ScBridge(peer, {
-    host: scBridgeHost,
-    port: Number.isSafeInteger(scBridgePort) ? scBridgePort : 49222,
-    filter: scBridgeFilter,
-    filterChannels: scBridgeFilterChannels || undefined,
-    token: scBridgeToken,
-    debug: scBridgeDebug,
-    cliEnabled: scBridgeCliEnabled,
-    requireAuth: true,
-    info: {
-      msbBootstrap: msbBootstrapHex,
-      msbChannel,
-      msbStore: msbStorePath,
-      msbDhtBootstrap: Array.isArray(msbConfig?.dhtBootstrap) ? msbConfig.dhtBootstrap.slice() : null,
-      peerStore: peerStorePath,
-      peerDhtBootstrap: Array.isArray(peerConfig?.dhtBootstrap) ? peerConfig.dhtBootstrap.slice() : null,
-      subnetBootstrap: effectiveSubnetBootstrapHex,
-      subnetChannel,
-      peerPubkey: peer.wallet.publicKey,
-      peerTracAddress: peer.wallet.address ?? null,
-      peerWriterKey,
-      sidechannelEntry,
-      sidechannelExtras: sidechannelExtras.slice(),
-    },
-  });
-}
-
-const sidechannel = new Sidechannel(peer, {
-  channels: [sidechannelEntry, ...sidechannelExtras],
-  debug: sidechannelDebug,
-  maxMessageBytes: Number.isSafeInteger(sidechannelMaxBytes) ? sidechannelMaxBytes : undefined,
-  entryChannel: sidechannelEntry,
-  allowRemoteOpen: sidechannelAllowRemoteOpen,
-  autoJoinOnOpen: sidechannelAutoJoin,
-  powEnabled: sidechannelPowEnabled,
-  powDifficulty: Number.isInteger(sidechannelPowDifficulty) ? sidechannelPowDifficulty : undefined,
-  powRequireEntry: sidechannelPowRequireEntry,
-  powRequiredChannels: sidechannelPowChannels || undefined,
-  inviteRequired: sidechannelInviteRequired,
-  inviteRequiredChannels: sidechannelInviteChannels || undefined,
-  inviteRequiredPrefixes: sidechannelInvitePrefixes || undefined,
-  inviterKeys: sidechannelInviterKeys,
-  inviteTtlMs: sidechannelInviteTtlMs,
-  welcomeRequired: sidechannelWelcomeRequired,
-  ownerWriteOnly: sidechannelOwnerWriteOnly,
-  ownerWriteChannels: sidechannelOwnerWriteChannels || undefined,
-  ownerKeys: sidechannelOwnerMap.size > 0 ? sidechannelOwnerMap : undefined,
-  welcomeByChannel: sidechannelWelcomeMap.size > 0 ? sidechannelWelcomeMap : undefined,
-  onMessage: scBridgeEnabled
-    ? (channel, payload, connection) => scBridge.handleSidechannelMessage(channel, payload, connection)
-    : sidechannelQuiet
-      ? () => {}
-      : null,
-});
-peer.sidechannel = sidechannel;
-
-if (scBridge) {
-  scBridge.attachSidechannel(sidechannel);
-  try {
-    scBridge.start();
-  } catch (err) {
-    console.error('SC-Bridge failed to start:', err?.message ?? err);
+  title("AGENT: ANALYST");
+  const analyst = await analystAgent({ llm, chainHint, token, market });
+  console.log(`${badge("SIGNAL", analyst.signal === "BUY" ? "ok" : analyst.signal === "SELL" ? "bad" : "warn")} ${C.bold}${analyst.signal}${C.reset}`);
+  (analyst.why || []).forEach((x) => console.log(`- ${x}`));
+  if (analyst.questions?.length) {
+    console.log(`\n${badge("QUESTIONS", "info")}`);
+    analyst.questions.forEach((q) => console.log(`- ${q}`));
   }
-  peer.scBridge = scBridge;
-}
 
-sidechannel
-  .start()
-  .then(() => {
-    console.log('Sidechannel: ready');
-  })
-  .catch((err) => {
-    console.error('Sidechannel failed to start:', err?.message ?? err);
+  title("AGENT: RISK GATE");
+  const risk = await riskGateAgent({
+    llm,
+    chainHint,
+    token,
+    market,
+    analystSignal: analyst.signal,
   });
 
-const terminal = new Terminal(peer);
-await terminal.start();
+  const st = risk.status || "CAUTION";
+  console.log(`${badge("STATUS", st === "SAFE" ? "ok" : st === "BLOCK" ? "bad" : "warn")} ${C.bold}${st}${C.reset}`);
+  (risk.flags || []).forEach((x) => console.log(`- ${x}`));
+
+  console.log(`\n${badge("CHECKLIST", "info")}`);
+  (risk.checklist || []).forEach((x) => console.log(`- ${x}`));
+
+  title("DECISION");
+  if (st === "BLOCK") {
+    console.log(`${badge("RESULT", "bad")} ${C.bold}DO NOT TRADE${C.reset}`);
+  } else if (st === "CAUTION") {
+    console.log(`${badge("RESULT", "warn")} ${C.bold}SMALL SIZE / WAIT${C.reset}`);
+  } else {
+    console.log(`${badge("RESULT", "ok")} ${C.bold}OK TO PROCEED (manage risk)${C.reset}`);
+  }
+  console.log("");
+
+  // Q&A option
+  const openQA = await ask(`${C.dim}Open Q&A mode? (y/n): ${C.reset}`);
+  if (openQA.toLowerCase() === "y") {
+    await chatWithAgents({
+      llm,
+      context: { chainHint, token, market, analyst, risk },
+    });
+  }
+}
+
+async function runSwapLinkMode() {
+  title("SWAP — LINK GENERATOR");
+  console.log(`${C.dim}Safe mode:${C.reset} generates a swap link (no private key, no execution).\n`);
+
+  const chain = await ask("Chain (sol/eth/bsc/base): ");
+  const fromToken = await ask("From (symbol or mint/CA): ");
+  const toToken = await ask("To (symbol or mint/CA): ");
+  const amount = await ask("Amount (optional): ");
+
+  const link = makeSwapLink({ chain, fromToken, toToken, amount });
+
+  if (!link) {
+    console.log(`${badge("WARN", "warn")} Unknown chain. Use: sol / eth / bsc / base / arb / op / polygon\n`);
+    return;
+  }
+
+  title("SWAP LINK");
+  console.log(link);
+  console.log(`\n${C.dim}Tip:${C.reset} Open link in browser, connect wallet, confirm swap manually.\n`);
+}
+
+async function runRiskOnlyMode() {
+  const llm = createLLM();
+
+  title("RISK CHECK — REAL DATA");
+  console.log(`${C.dim}Tip:${C.reset} Use CA for accuracy.\n`);
+
+  const chainHint = await ask("Chain hint (sol/eth/bsc/base) [optional]: ");
+  const token = await ask("Token (symbol or CA): ");
+
+  console.log(`\n${badge("DATA", "info")} Fetching Dexscreener...`);
+  const market = await getTokenData(token);
+
+  if (!market) {
+    console.log(`${badge("WARN", "warn")} No Dexscreener pairs found.\n`);
+    return;
+  }
+
+  title("MARKET SNAPSHOT");
+  line("Name", `${market.name} (${market.symbol})`);
+  line("Chain / DEX", `${market.chain} / ${market.dex}`);
+  line("Price", `${market.price}`);
+  line("Liquidity", `${fmtUSD(market.liquidity)}`);
+  line("Volume 24h", `${fmtUSD(market.volume24h)}`);
+  hr();
+  console.log("");
+
+  const risk = await riskGateAgent({ llm, chainHint, token, market, analystSignal: "HOLD" });
+
+  title("RISK GATE RESULT");
+  const st = risk.status || "CAUTION";
+  console.log(`${badge("STATUS", st === "SAFE" ? "ok" : st === "BLOCK" ? "bad" : "warn")} ${C.bold}${st}${C.reset}`);
+  (risk.flags || []).forEach((x) => console.log(`- ${x}`));
+
+  console.log(`\n${badge("CHECKLIST", "info")}`);
+  (risk.checklist || []).forEach((x) => console.log(`- ${x}`));
+  console.log("");
+}
+
+// ========= Main Menu =========
+async function mainMenu() {
+  while (true) {
+    title("INTERCOM_BY_GAMBER8");
+    console.log(`${badge("1", "info")} Agent Mode (Real Data + Q&A)`);
+    console.log(`${badge("2", "info")} Swap (Link Generator)`);
+    console.log(`${badge("3", "info")} Risk Check (Real Data)`);
+    console.log(`${badge("4", "info")} Exit`);
+    console.log("");
+
+    const choice = await ask("Select option: ");
+
+    if (choice === "1") await runAgentMode();
+    else if (choice === "2") await runSwapLinkMode();
+    else if (choice === "3") await runRiskOnlyMode();
+    else if (choice === "4") {
+      console.log("Bye!");
+      rl.close();
+      process.exit(0);
+    } else {
+      console.log(`${badge("WARN", "warn")} Invalid option\n`);
+    }
+  }
+}
+
+mainMenu();

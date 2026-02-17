@@ -1,81 +1,210 @@
-# Intercom
+# ⚡ INTERCOM_BY_GRIMORE8 — AI Trading Copilot Dashboard
 
-This repository is a reference implementation of the **Intercom** stack on Trac Network for an **internet of agents**.
+## 📍 Trac Address
+trac1g2afss6v96du6jkuptl9gzv2c9g0n7lsn9sqx0u3639zgmx38nrs9lnqtz
 
-At its core, Intercom is a **peer-to-peer (P2P) network**: peers discover each other and communicate directly (with optional relaying) over the Trac/Holepunch stack (Hyperswarm/HyperDHT + Protomux). There is no central server required for sidechannel messaging.
+---
 
-Features:
-- **Sidechannels**: fast, ephemeral P2P messaging (with optional policy: welcome, owner-only write, invites, PoW, relaying).
-- **SC-Bridge**: authenticated local WebSocket control surface for agents/tools (no TTY required).
-- **Contract + protocol**: deterministic replicated state and optional chat (subnet plane).
-- **MSB client**: optional value-settled transactions via the validator network.
+## 🚀 Overview
 
-Additional references: https://www.moltbook.com/post/9ddd5a47-4e8d-4f01-9908-774669a11c21 and moltbook m/intercom
+INTERCOM_BY_GRIMORE8 is a high-performance **CLI + Web Dashboard AI Trading Copilot** built on an Intercom-style multi-agent architecture.
 
-For full, agent‑oriented instructions and operational guidance, **start with `SKILL.md`**.  
-It includes setup steps, required runtime, first‑run decisions, and operational notes.
+It combines real-time market intelligence with a clean, proof-friendly interface:
 
-## Awesome Intercom
+- Real-time token snapshot (Dexscreener)
+- Analyst Agent (signal generator)
+- Risk Gate Agent (safety filter)
+- Token chart pipeline (DEX → OHLCV)
+- Price chart (CoinGecko)
+- Swap simulator (x*y=k model)
 
-For a curated list of agentic Intercom apps check out: https://github.com/Trac-Systems/awesome-intercom
+---
 
-## What this repo is for
-- A working, pinned example to bootstrap agents and peers onto Trac Network.
-- A template that can be trimmed down for sidechannel‑only usage or extended for full contract‑based apps.
+## ⚙️ What It Does
 
-## How to use
-Use the **Pear runtime only** (never native node).  
-Follow the steps in `SKILL.md` to install dependencies, run the admin peer, and join peers correctly.
+### 🧠 Multi-Agent Output (Core)
+The system always produces:
 
-## Architecture (ASCII map)
-Intercom is a single long-running Pear process that participates in three distinct networking "planes":
-- **Subnet plane**: deterministic state replication (Autobase/Hyperbee over Hyperswarm/Protomux).
-- **Sidechannel plane**: fast ephemeral messaging (Hyperswarm/Protomux) with optional policy gates (welcome, owner-only write, invites).
-- **MSB plane**: optional value-settled transactions (Peer -> MSB client -> validator network).
+- **SIGNAL** → BUY / HOLD / SELL  
+- **RISK** → SAFE / CAUTION / BLOCK  
+- **DECISION** → actionable next step
 
-```text
-                          Pear runtime (mandatory)
-                pear run . --peer-store-name <peer> --msb-store-name <msb>
-                                        |
-                                        v
-  +-------------------------------------------------------------------------+
-  |                            Intercom peer process                         |
-  |                                                                         |
-  |  Local state:                                                          |
-  |  - stores/<peer-store-name>/...   (peer identity, subnet state, etc)    |
-  |  - stores/<msb-store-name>/...    (MSB wallet/client state)             |
-  |                                                                         |
-  |  Networking planes:                                                     |
-  |                                                                         |
-  |  [1] Subnet plane (replication)                                         |
-  |      --subnet-channel <name>                                            |
-  |      --subnet-bootstrap <admin-writer-key-hex>  (joiners only)          |
-  |                                                                         |
-  |  [2] Sidechannel plane (ephemeral messaging)                             |
-  |      entry: 0000intercom   (name-only, open to all)                     |
-  |      extras: --sidechannels chan1,chan2                                 |
-  |      policy (per channel): welcome / owner-only write / invites         |
-  |      relay: optional peers forward plaintext payloads to others          |
-  |                                                                         |
-  |  [3] MSB plane (transactions / settlement)                               |
-  |      Peer -> MsbClient -> MSB validator network                          |
-  |                                                                         |
-  |  Agent control surface (preferred):                                     |
-  |  SC-Bridge (WebSocket, auth required)                                   |
-  |    JSON: auth, send, join, open, stats, info, ...                       |
-  +------------------------------+------------------------------+-----------+
-                                 |                              |
-                                 | SC-Bridge (ws://host:port)   | P2P (Hyperswarm)
-                                 v                              v
-                       +-----------------+            +-----------------------+
-                       | Agent / tooling |            | Other peers (P2P)     |
-                       | (no TTY needed) |<---------->| subnet + sidechannels |
-                       +-----------------+            +-----------------------+
+Visual status:
+- 🟢 SAFE (proceed)
+- 🟡 CAUTION (small size / wait)
+- 🔴 BLOCK (do not trade)
 
-  Optional for local testing:
-  - --dht-bootstrap "<host:port,host:port>" overrides the peer's HyperDHT bootstraps
-    (all peers that should discover each other must use the same list).
+### 🌐 Dashboard Mode (Web UI)
+A clean, responsive dashboard providing:
+
+- SOL balance + recent transactions
+- BTC / ETH / SOL prices + 24h chart
+- Token chart (Dexscreener → GeckoTerminal OHLCV)
+- Agent panel (Signal / Risk / Decision + warning colors)
+- Swap simulator (constant product model)
+
+### 💻 CLI Mode (Terminal)
+Minimal CLI interaction:
+
+```
+1. Agent Mode (Real Data + Q&A)
+2. Swap (Link Generator)
+3. Risk Check (Real Data)
+4. Exit
+```
+
+### 🔗 Swap Link Generator (Safe Mode)
+- Generates swap links only
+- No wallet connection
+- No transaction execution
+
+Example:
+```
+https://jup.ag/swap/TOKEN-SOL
 ```
 
 ---
-If you plan to build your own app, study the existing contract/protocol and remove example logic as needed (see `SKILL.md`).
+
+## 📌 Agent Output Format
+
+```
+SIGNAL: HOLD
+RISK: CAUTION
+DECISION: SMALL SIZE / WAIT
+
+WHY:
+- high volume but unclear direction
+- liquidity is acceptable but not strong
+
+FLAGS:
+- low liquidity vs volume ratio
+
+CHECKLIST:
+- verify contract address (CA)
+- check liquidity depth
+- check top holders
+- start with a small test
+```
+
+---
+
+## 📸 Proof 
+### Dashboard + Wallet
+![Dashboard Wallet](./assets/proof-dashboard-wallet.jpg)
+
+### Prices + 24h Chart
+![Prices Chart](./assets/proof-prices-chart.jpg)
+
+### Token Chart (DEX → OHLCV)
+![Token Chart](./assets/proof-token-chart.jpg)
+
+### Agent Mode (Signal/Risk/Decision)
+![Agent Mode](./assets/proof-agent-mode.jpg)
+
+### Swap Simulator
+![Swap Simulator](./assets/proof-swap-simulator.jpg)
+
+---
+
+## 🖥️ VPS Installation
+
+### 1) System dependencies
+```bash
+sudo apt update -y
+sudo apt install -y git curl
+```
+
+### 2) Install Node.js (recommended: Node 20)
+```bash
+curl -fsSL https://deb.nodesource.com/setup_20.x | sudo -E bash -
+sudo apt install -y nodejs
+node -v
+npm -v
+```
+
+### 3) Clone + install
+```bash
+git clone https://github.com/grimore8/intercom_by_grimore8.git
+cd intercom_by_grimore8
+npm install
+```
+
+---
+
+## ▶️ Run (VPS)
+
+### Run Dashboard (Web UI)
+```bash
+npm run dashboard
+```
+
+Expected output:
+```text
+Dashboard running: http://127.0.0.1:8788
+Agent mode: Fallback (no API)
+```
+
+Open in browser:
+```text
+http://YOUR_VPS_IP:8788
+```
+
+### Run CLI (Terminal)
+```bash
+node index.js
+```
+
+---
+
+## 🔧 Troubleshooting (VPS)
+
+### Port already in use (EADDRINUSE)
+```bash
+lsof -i :8788
+kill -9 <PID>
+```
+
+### Open firewall port
+```bash
+sudo ufw allow 8788/tcp
+sudo ufw reload
+```
+
+---
+
+## 🔑 Optional AI (Groq)
+
+This app works without keys (fallback logic).  
+To enable AI-assisted agent mode:
+
+```bash
+export GROQ_API_KEY="YOUR_GROQ_API_KEY"
+export GROQ_MODEL="llama-3.3-70b-versatile"
+npm run dashboard
+```
+
+---
+
+## 🔒 Security Model
+
+- No private key usage
+- Read-only analysis + charts
+- Swap is simulation / link generation only
+- Safe for demos and evaluation
+
+---
+
+## 🎯 Goal
+
+Build a lightweight, deployable AI trading assistant that:
+- Improves decision clarity
+- Reduces risk exposure
+- Preserves Intercom-style interaction
+- Produces clean proof screenshots
+
+---
+
+## ⚠️ Disclaimer
+
+This tool is for educational and experimental purposes only.  
+Always do your own research before trading.

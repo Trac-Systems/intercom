@@ -1,0 +1,676 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width,initial-scale=1" />
+  <title>⚡ Intercom Dashboard Bot</title>
+  <style>
+    :root{
+      --bg:#071018; --line:#143245; --text:#d7f7ff; --muted:#8ab3c2;
+      --accent:#4ff7c8; --accent2:#4aa3ff; --warn:#ffce4a; --bad:#ff5b6b;
+      --shadow: 0 12px 30px rgba(0,0,0,.35); --radius: 18px;
+      --mono: ui-monospace,SFMono-Regular,Menlo,Monaco,Consolas,"Liberation Mono","Courier New",monospace;
+
+      --safe:#4ff7c8;
+      --caution:#ffce4a;
+      --block:#ff5b6b;
+      --neutral:#4aa3ff;
+      --cardbg: rgba(7,21,31,.65);
+      --cardbg2: rgba(7,21,31,.75);
+    }
+    *{box-sizing:border-box}
+    body{
+      margin:0;
+      background: radial-gradient(1200px 900px at 20% 10%, rgba(79,247,200,.10), transparent 45%),
+                  radial-gradient(900px 800px at 90% 20%, rgba(74,163,255,.10), transparent 40%),
+                  var(--bg);
+      color:var(--text);
+      font-family: var(--mono);
+      letter-spacing:.2px;
+    }
+    .wrap{max-width:980px;margin:18px auto;padding:16px}
+    .title{font-size:28px;font-weight:900;display:flex;gap:10px;align-items:center;margin:6px 0 14px}
+    .title .bolt{color:var(--warn)}
+    .sub{color:var(--muted);margin-bottom:14px}
+    .grid{display:grid;grid-template-columns:1fr;gap:14px}
+    .card{
+      background: linear-gradient(180deg, rgba(255,255,255,.03), rgba(255,255,255,.01));
+      border:1px solid rgba(20,50,69,.7);
+      border-radius:var(--radius);
+      box-shadow: var(--shadow);
+      padding:14px;
+      position:relative; overflow:hidden;
+    }
+    .card:before{
+      content:"";
+      position:absolute;inset:-2px;
+      background: radial-gradient(600px 180px at 30% 0%, rgba(79,247,200,.12), transparent 60%),
+                  radial-gradient(600px 180px at 80% 0%, rgba(74,163,255,.10), transparent 60%);
+      pointer-events:none; opacity:.9;
+    }
+    .card > *{position:relative}
+    .row{display:flex;gap:12px;flex-wrap:wrap;align-items:center;justify-content:space-between}
+    .pill{
+      display:inline-flex;gap:8px;align-items:center;
+      padding:10px 12px;border:1px solid rgba(20,50,69,.85);
+      border-radius:999px;background:rgba(7,21,31,.6); color:var(--text);
+    }
+    .pill strong{color:var(--accent)}
+    .btn{
+      cursor:pointer; padding:10px 14px;border-radius:12px;
+      border:1px solid rgba(20,50,69,.9); background:rgba(7,21,31,.65);
+      color:var(--text); font-family:var(--mono);
+    }
+    .btn:hover{border-color:rgba(79,247,200,.55)}
+    .mini{color:var(--muted);font-size:12px}
+    .label{color:var(--muted);font-size:12px;margin-bottom:6px}
+    input, select{
+      width:100%; padding:12px 12px;border-radius:14px;
+      border:1px solid rgba(20,50,69,.85); background:rgba(7,21,31,.72);
+      color:var(--text); font-family:var(--mono); outline:none;
+    }
+    input:focus, select:focus{border-color:rgba(79,247,200,.6)}
+    .two{display:grid;grid-template-columns:1fr 1fr;gap:12px}
+    @media (max-width:720px){ .two{grid-template-columns:1fr} }
+    .hr{height:1px;background:rgba(20,50,69,.8);margin:12px 0}
+    pre{
+      margin:0; padding:12px; border-radius:14px;
+      border:1px solid rgba(20,50,69,.85); background:rgba(7,21,31,.75);
+      color:var(--text); overflow:auto; line-height:1.35;
+      white-space:pre-wrap;
+    }
+    canvas{
+      width:100%;
+      height:220px;
+      border-radius:14px;
+      border:1px solid rgba(20,50,69,.85);
+      background:rgba(7,21,31,.65);
+    }
+
+    /* ==== STATUS UI ==== */
+    .badge{
+      display:inline-flex;
+      align-items:center;
+      gap:8px;
+      padding:8px 10px;
+      border-radius:999px;
+      border:1px solid rgba(20,50,69,.85);
+      background: var(--cardbg);
+      font-size:12px;
+      line-height:1;
+      user-select:none;
+      white-space:nowrap;
+    }
+    .dot{
+      width:9px; height:9px; border-radius:50%;
+      background: var(--neutral);
+      box-shadow: 0 0 12px rgba(74,163,255,.35);
+    }
+    .badge.safe{border-color: rgba(79,247,200,.55)}
+    .badge.safe .dot{background: var(--safe); box-shadow:0 0 12px rgba(79,247,200,.45)}
+    .badge.caution{border-color: rgba(255,206,74,.55)}
+    .badge.caution .dot{background: var(--caution); box-shadow:0 0 12px rgba(255,206,74,.45)}
+    .badge.block{border-color: rgba(255,91,107,.60)}
+    .badge.block .dot{background: var(--block); box-shadow:0 0 12px rgba(255,91,107,.45)}
+    .badge.neutral .dot{background: var(--neutral)}
+
+    .panel{
+      border:1px solid rgba(20,50,69,.85);
+      background: var(--cardbg2);
+      border-radius: 16px;
+      padding:12px;
+    }
+
+    .warningBox{
+      border-radius:16px;
+      padding:12px;
+      border:1px solid rgba(255,91,107,.60);
+      background: rgba(255,91,107,.10);
+      display:none;
+    }
+    .warningBox.show{display:block;}
+    .warningTitle{
+      display:flex; align-items:center; gap:10px;
+      font-weight:800;
+      color: var(--bad);
+      margin-bottom:6px;
+    }
+    .warningTitle span{
+      width:22px;height:22px;border-radius:8px;
+      display:inline-grid;place-items:center;
+      background: rgba(255,91,107,.18);
+      border:1px solid rgba(255,91,107,.55);
+    }
+
+    .kv{
+      display:grid;
+      grid-template-columns: 1fr;
+      gap:10px;
+    }
+    @media (min-width:820px){
+      .kv{grid-template-columns: 1fr 1fr 1fr}
+    }
+
+    .kitem{
+      border:1px solid rgba(20,50,69,.85);
+      background: rgba(7,21,31,.55);
+      border-radius: 16px;
+      padding:10px 12px;
+      min-height: 66px;
+    }
+    .kitem .k{font-size:11px;color:var(--muted);margin-bottom:6px}
+    .kitem .v{font-size:13px}
+    .v strong{color:var(--accent2)}
+    .v .big{font-size:14px;font-weight:800}
+
+    /* ==== COLLAPSIBLE (HIDE RAW) ==== */
+    details summary{ list-style:none; }
+    details summary::-webkit-details-marker{ display:none; }
+    details{ margin-top:6px; }
+  </style>
+</head>
+<body>
+  <div class="wrap">
+    <div class="title"><span class="bolt">⚡</span> Intercom Dashboard Bot <span class="mini">(localhost)</span></div>
+    <div class="sub">
+      Clean UI: Raw outputs hidden by default. SAFE (green), CAUTION (yellow), BLOCK (red).
+    </div>
+
+    <div class="grid">
+
+      <!-- WALLET -->
+      <div class="card">
+        <div class="row">
+          <div class="pill">SOL Balance: <strong id="solBal">—</strong> SOL</div>
+          <div class="row" style="justify-content:flex-end">
+            <div class="pill mini">Updated: <span id="updated">—</span></div>
+            <button class="btn" id="refreshBtn">Refresh</button>
+          </div>
+        </div>
+        <div class="hr"></div>
+        <div class="label">Wallet (Solana Public Key)</div>
+        <input id="pubkey" placeholder="Paste your Solana address (public key)..." />
+        <div class="mini" style="margin-top:8px">
+          TX list uses cached calls to reduce rate limits.
+        </div>
+      </div>
+
+      <!-- PRICES + CHART -->
+      <div class="card">
+        <div class="row">
+          <div class="pill">Prices (USD): <span id="pricesLine">—</span></div>
+          <div class="row">
+            <select id="coinSel" title="Chart asset">
+              <option value="bitcoin">BTC</option>
+              <option value="ethereum">ETH</option>
+              <option value="solana">SOL</option>
+            </select>
+            <button class="btn" id="chartBtn">Load Chart</button>
+          </div>
+        </div>
+        <div class="hr"></div>
+        <canvas id="chart"></canvas>
+        <div class="mini" style="margin-top:8px">
+          CoinGecko 24h market_chart → Canvas line chart.
+        </div>
+      </div>
+
+      <!-- TOKEN CHART -->
+      <div class="card">
+        <div class="row">
+          <div class="pill">Token Chart (Dex → OHLCV)</div>
+          <div class="pill mini">Tip: CA recommended</div>
+        </div>
+        <div class="hr"></div>
+        <div class="label">Token (symbol or CA)</div>
+        <input id="tokenChartQ" placeholder="e.g. BONK or 0x... (CA is best)" />
+        <div style="height:10px"></div>
+        <button class="btn" id="tokenChartBtn">Load Token Chart (24h)</button>
+        <div style="height:12px"></div>
+        <canvas id="tokenChart"></canvas>
+
+        <details>
+          <summary class="btn" style="display:inline-block">Show token chart debug</summary>
+          <div style="height:10px"></div>
+          <pre id="tokenChartMeta">{ "ok": true, "note": "Loads Dexscreener pair then GeckoTerminal OHLCV." }</pre>
+        </details>
+      </div>
+
+      <!-- AGENT + DEX -->
+      <div class="card">
+        <div class="row">
+          <div class="pill">Agent Mode (Dexscreener)</div>
+
+          <div class="row" style="gap:10px;justify-content:flex-end">
+            <span class="badge neutral" id="badgeMode"><span class="dot"></span><span id="agentMode">—</span></span>
+            <span class="badge neutral" id="badgeRisk"><span class="dot"></span><span id="riskText">RISK: —</span></span>
+            <span class="badge neutral" id="badgeSignal"><span class="dot"></span><span id="signalText">SIGNAL: —</span></span>
+            <span class="badge neutral" id="badgeDecision"><span class="dot"></span><span id="decisionText">DECISION: —</span></span>
+          </div>
+        </div>
+
+        <div class="hr"></div>
+
+        <div class="label">Token (symbol or CA)</div>
+        <input id="tokenQ" placeholder="e.g. BONK or 0x... (CA recommended)" />
+
+        <div style="height:10px"></div>
+
+        <div class="two">
+          <button class="btn" id="dexBtn">Check Dex</button>
+          <button class="btn" id="analyzeBtn">Run Agent</button>
+        </div>
+
+        <div style="height:12px"></div>
+
+        <!-- Warning / danger box -->
+        <div class="warningBox" id="warnBox">
+          <div class="warningTitle"><span>!</span> High Risk Detected</div>
+          <div class="mini" id="warnText">—</div>
+        </div>
+
+        <div style="height:12px"></div>
+
+        <div class="label">Agent Summary</div>
+        <div class="panel">
+          <div class="kv">
+            <div class="kitem">
+              <div class="k">Signal</div>
+              <div class="v"><span class="big" id="sumSignal">—</span></div>
+            </div>
+            <div class="kitem">
+              <div class="k">Risk Status</div>
+              <div class="v"><span class="big" id="sumRisk">—</span></div>
+            </div>
+            <div class="kitem">
+              <div class="k">Decision</div>
+              <div class="v"><span class="big" id="sumDecision">—</span></div>
+            </div>
+          </div>
+
+          <div class="hr"></div>
+
+          <div class="kitem" style="min-height:auto">
+            <div class="k">Why</div>
+            <div class="v" id="sumWhy">—</div>
+          </div>
+
+          <div style="height:10px"></div>
+
+          <div class="kitem" style="min-height:auto">
+            <div class="k">Flags</div>
+            <div class="v" id="sumFlags">—</div>
+          </div>
+
+          <div style="height:10px"></div>
+
+          <div class="kitem" style="min-height:auto">
+            <div class="k">Checklist</div>
+            <div class="v" id="sumChecklist">—</div>
+          </div>
+        </div>
+
+        <div style="height:12px"></div>
+
+        <div class="label">Market Snapshot</div>
+        <details>
+          <summary class="btn" style="display:inline-block">Show market snapshot</summary>
+          <div style="height:10px"></div>
+          <pre id="dexBox">{ "ok": true, "note": "Click 'Check Dex' to fetch live market data." }</pre>
+        </details>
+
+        <div style="height:12px"></div>
+
+        <div class="label">Raw Agent JSON</div>
+        <details>
+          <summary class="btn" style="display:inline-block">Show raw agent output</summary>
+          <div style="height:10px"></div>
+          <pre id="agentBox">{ "ok": true, "note": "Click 'Run Agent' to generate signal + risk + decision." }</pre>
+        </details>
+      </div>
+
+      <!-- TX -->
+      <div class="card">
+        <div class="pill">Recent TX</div>
+        <div class="hr"></div>
+        <details>
+          <summary class="btn" style="display:inline-block">Show raw TX</summary>
+          <div style="height:10px"></div>
+          <pre id="txBox">{ "ok": true, "note": "Enter a wallet address then refresh." }</pre>
+        </details>
+      </div>
+
+      <!-- SIMULATOR -->
+      <div class="card">
+        <div class="pill">Swap Simulator (x*y=k)</div>
+        <div class="hr"></div>
+
+        <div class="two">
+          <div>
+            <div class="label">Reserve X</div>
+            <input id="rx" value="1000" inputmode="decimal" />
+          </div>
+          <div>
+            <div class="label">Reserve Y</div>
+            <input id="ry" value="1000" inputmode="decimal" />
+          </div>
+        </div>
+
+        <div style="height:10px"></div>
+
+        <div class="two">
+          <div>
+            <div class="label">Amount In (X)</div>
+            <input id="ain" value="10" inputmode="decimal" />
+          </div>
+          <div>
+            <div class="label">Fee (bps)</div>
+            <input id="fee" value="30" inputmode="numeric" />
+          </div>
+        </div>
+
+        <div style="height:12px"></div>
+
+        <button class="btn" id="simBtn">Simulate</button>
+        <div style="height:12px"></div>
+        <pre id="simBox">{ "ok": true, "note": "Simulate to see output." }</pre>
+      </div>
+
+    </div>
+  </div>
+
+  <script>
+    const $ = (id) => document.getElementById(id);
+
+    const state = { timer: null, refreshing: false, intervalMs: 20000 };
+
+    function nowLocal() {
+      const d = new Date();
+      const pad = (n) => String(n).padStart(2, "0");
+      return `${d.getFullYear()}-${pad(d.getMonth()+1)}-${pad(d.getDate())} ${pad(d.getHours())}:${pad(d.getMinutes())}:${pad(d.getSeconds())}`;
+    }
+
+    async function getJSON(url) {
+      const r = await fetch(url);
+      return await r.json();
+    }
+
+    function setPretty(el, obj) {
+      el.textContent = JSON.stringify(obj, null, 2);
+    }
+
+    function fmtPrice(n) {
+      if (typeof n !== "number") return "—";
+      return n >= 1000 ? n.toFixed(0) : n >= 1 ? n.toFixed(2) : n.toFixed(6);
+    }
+
+    function fmtPct(n) {
+      if (typeof n !== "number") return "—";
+      const sign = n >= 0 ? "+" : "";
+      return `${sign}${n.toFixed(2)}%`;
+    }
+
+    // ---- Status badge helpers ----
+    function badgeClassFromStatus(status) {
+      const s = String(status || "").toUpperCase();
+      if (s === "SAFE") return "safe";
+      if (s === "CAUTION") return "caution";
+      if (s === "BLOCK") return "block";
+      return "neutral";
+    }
+    function setBadge(el, text, status) {
+      el.classList.remove("safe","caution","block","neutral");
+      el.classList.add("badge", badgeClassFromStatus(status));
+      el.querySelector("span:last-child").textContent = text;
+    }
+    function normalizeSignal(sig) {
+      const s = String(sig || "").toUpperCase();
+      if (s === "BUY" || s === "SELL" || s === "HOLD") return s;
+      return "HOLD";
+    }
+    function signalToRiskLike(sig) {
+      const s = normalizeSignal(sig);
+      if (s === "BUY") return "SAFE";
+      if (s === "SELL") return "CAUTION";
+      return "NEUTRAL";
+    }
+
+    // ---- Canvas chart (simple line) ----
+    function drawLineChart(canvas, points, label) {
+      const ctx = canvas.getContext("2d");
+      const dpr = window.devicePixelRatio || 1;
+      const rect = canvas.getBoundingClientRect();
+      canvas.width = Math.floor(rect.width * dpr);
+      canvas.height = Math.floor(rect.height * dpr);
+      ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+
+      const w = rect.width;
+      const h = rect.height;
+
+      ctx.clearRect(0, 0, w, h);
+
+      // grid
+      ctx.strokeStyle = "rgba(20,50,69,.65)";
+      ctx.lineWidth = 1;
+      for (let i = 1; i <= 5; i++) {
+        const y = (h * i) / 6;
+        ctx.beginPath();
+        ctx.moveTo(12, y);
+        ctx.lineTo(w - 12, y);
+        ctx.stroke();
+      }
+
+      if (!points || points.length < 2) {
+        ctx.fillStyle = "rgba(215,247,255,.8)";
+        ctx.font = "12px ui-monospace, Menlo, monospace";
+        ctx.fillText("No chart data.", 16, 22);
+        return;
+      }
+
+      const vals = points.map(p => p[1]).filter(v => Number.isFinite(v));
+      if (vals.length < 2) return;
+
+      const min = Math.min(...vals);
+      const max = Math.max(...vals);
+      const pad = (max - min) * 0.05 || 1;
+
+      const x0 = 12, y0 = 18, x1 = w - 12, y1 = h - 18;
+      const scaleX = (x1 - x0) / (points.length - 1);
+      const scaleY = (y1 - y0) / (max - min + pad * 2);
+
+      // line
+      ctx.lineWidth = 2;
+      ctx.strokeStyle = "rgba(79,247,200,.95)";
+      ctx.beginPath();
+      for (let i = 0; i < points.length; i++) {
+        const x = x0 + i * scaleX;
+        const y = y1 - (points[i][1] - (min - pad)) * scaleY;
+        if (i === 0) ctx.moveTo(x, y);
+        else ctx.lineTo(x, y);
+      }
+      ctx.stroke();
+
+      // label + min/max
+      ctx.fillStyle = "rgba(215,247,255,.9)";
+      ctx.font = "12px ui-monospace, Menlo, monospace";
+      const last = points[points.length - 1][1];
+      ctx.fillText(`${label}  24h`, 16, 18);
+      ctx.fillText(`last: $${fmtPrice(last)}`, 16, h - 10);
+      ctx.fillText(`min: $${fmtPrice(min)}  max: $${fmtPrice(max)}`, Math.max(16, w - 260), h - 10);
+    }
+
+    async function loadChart() {
+      const coin = $("coinSel").value;
+      const c = await getJSON(`/api/chart?coin=${encodeURIComponent(coin)}`);
+      if (!c.ok) {
+        drawLineChart($("chart"), [], "Chart");
+        return;
+      }
+      const label = coin === "bitcoin" ? "BTC" : coin === "ethereum" ? "ETH" : "SOL";
+      drawLineChart($("chart"), c.prices, label);
+    }
+
+    async function loadTokenChart() {
+      const q = $("tokenChartQ").value.trim();
+      if (!q) {
+        setPretty($("tokenChartMeta"), { ok:false, error:"Enter token symbol or CA" });
+        drawLineChart($("tokenChart"), [], "TOKEN");
+        return;
+      }
+      const j = await getJSON(`/api/token_chart?q=${encodeURIComponent(q)}`);
+      setPretty($("tokenChartMeta"), j);
+
+      if (!j.ok || !Array.isArray(j.closes) || j.closes.length < 2) {
+        drawLineChart($("tokenChart"), [], "TOKEN");
+        return;
+      }
+      const label = `${j.dex?.symbol || "TOKEN"} (${j.dex?.chain || "chain"})`;
+      drawLineChart($("tokenChart"), j.closes, label);
+    }
+
+    async function refreshAll() {
+      if (state.refreshing) return;
+      state.refreshing = true;
+
+      $("updated").textContent = nowLocal();
+
+      const pubkey = $("pubkey").value.trim();
+      localStorage.setItem("intercom_pubkey", pubkey);
+
+      // Prices
+      try {
+        const p = await getJSON("/api/prices");
+        if (!p.ok) throw new Error(p.error || "prices error");
+        const btc = p.data.bitcoin;
+        const eth = p.data.ethereum;
+        const sol = p.data.solana;
+
+        $("pricesLine").innerHTML =
+          `<span class="accent2">BTC</span> $${fmtPrice(btc.usd)} (${fmtPct(btc.usd_24h_change)}) | ` +
+          `<span class="accent2">ETH</span> $${fmtPrice(eth.usd)} (${fmtPct(eth.usd_24h_change)}) | ` +
+          `<span class="accent2">SOL</span> $${fmtPrice(sol.usd)} (${fmtPct(sol.usd_24h_change)})`;
+      } catch (e) {
+        $("pricesLine").innerHTML = `<span style="color:var(--bad)">error</span>: ${String(e.message || e)}`;
+      }
+
+      // Balance + TX
+      if (pubkey) {
+        try {
+          const b = await getJSON(`/api/sol/balance?pubkey=${encodeURIComponent(pubkey)}`);
+          $("solBal").textContent = b.ok && typeof b.sol === "number" ? b.sol.toFixed(4) : "—";
+        } catch { $("solBal").textContent = "—"; }
+
+        try {
+          const t = await getJSON(`/api/sol/tx?pubkey=${encodeURIComponent(pubkey)}`);
+          setPretty($("txBox"), t);
+        } catch (e) {
+          setPretty($("txBox"), { ok:false, error: String(e.message || e) });
+        }
+      } else {
+        $("solBal").textContent = "—";
+        setPretty($("txBox"), { ok:true, note:"Enter a wallet address then refresh." });
+      }
+
+      state.refreshing = false;
+    }
+
+    async function simulate() {
+      try {
+        const payload = {
+          reserveX: Number($("rx").value),
+          reserveY: Number($("ry").value),
+          amountIn: Number($("ain").value),
+          feeBps: Number($("fee").value)
+        };
+        const r = await fetch("/api/simulate", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify(payload)
+        });
+        const j = await r.json();
+        setPretty($("simBox"), j);
+      } catch (e) {
+        setPretty($("simBox"), { ok:false, error: String(e.message || e) });
+      }
+    }
+
+    async function checkDex() {
+      const q = $("tokenQ").value.trim();
+      if (!q) return setPretty($("dexBox"), { ok:false, error:"Enter token symbol or CA" });
+
+      const j = await getJSON(`/api/dex?q=${encodeURIComponent(q)}`);
+      setPretty($("dexBox"), j);
+    }
+
+    function escapeHtml(s){
+      return s.replace(/[&<>"']/g, (m) => ({
+        "&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#039;"
+      }[m]));
+    }
+
+    function renderAgentSummary(j) {
+      const mode = j?.mode || "—";
+      setBadge($("badgeMode"), `MODE: ${String(mode).toUpperCase()}`, "NEUTRAL");
+
+      const riskStatus = j?.agent?.risk?.status || "—";
+      const signal = normalizeSignal(j?.agent?.signal);
+      const decision = j?.agent?.decision || "—";
+
+      setBadge($("badgeRisk"), `RISK: ${riskStatus}`, riskStatus);
+      setBadge($("badgeSignal"), `SIGNAL: ${signal}`, signalToRiskLike(signal));
+      setBadge($("badgeDecision"), `DECISION: ${decision}`, riskStatus);
+
+      $("sumRisk").textContent = riskStatus;
+      $("sumSignal").textContent = signal;
+      $("sumDecision").textContent = decision;
+
+      const why = Array.isArray(j?.agent?.why) ? j.agent.why : [];
+      $("sumWhy").innerHTML = why.length ? `<ul style="margin:0;padding-left:18px">${why.map(x=>`<li>${escapeHtml(String(x))}</li>`).join("")}</ul>` : "—";
+
+      const flags = Array.isArray(j?.agent?.risk?.flags) ? j.agent.risk.flags : [];
+      $("sumFlags").innerHTML = flags.length ? `<ul style="margin:0;padding-left:18px">${flags.map(x=>`<li>${escapeHtml(String(x))}</li>`).join("")}</ul>` : "—";
+
+      const checklist = Array.isArray(j?.agent?.risk?.checklist) ? j.agent.risk.checklist : [];
+      $("sumChecklist").innerHTML = checklist.length ? `<ul style="margin:0;padding-left:18px">${checklist.map(x=>`<li>${escapeHtml(String(x))}</li>`).join("")}</ul>` : "—";
+
+      const warn = $("warnBox");
+      const warnText = $("warnText");
+      if (String(riskStatus).toUpperCase() === "BLOCK") {
+        warn.classList.add("show");
+        warnText.textContent = flags.length ? flags.join(" | ") : "Risk is BLOCK. Avoid trading.";
+      } else {
+        warn.classList.remove("show");
+        warnText.textContent = "—";
+      }
+    }
+
+    async function runAgent() {
+      const q = $("tokenQ").value.trim();
+      if (!q) return setPretty($("agentBox"), { ok:false, error:"Enter token symbol or CA" });
+
+      const j = await getJSON(`/api/agent/analyze?q=${encodeURIComponent(q)}`);
+      renderAgentSummary(j);
+      setPretty($("agentBox"), j);
+    }
+
+    // Init
+    const saved = localStorage.getItem("intercom_pubkey");
+    if (saved) $("pubkey").value = saved;
+
+    $("refreshBtn").addEventListener("click", refreshAll);
+    $("simBtn").addEventListener("click", simulate);
+    $("dexBtn").addEventListener("click", checkDex);
+    $("analyzeBtn").addEventListener("click", runAgent);
+
+    $("chartBtn").addEventListener("click", loadChart);
+    $("coinSel").addEventListener("change", loadChart);
+
+    $("tokenChartBtn").addEventListener("click", loadTokenChart);
+
+    refreshAll();
+    loadChart();
+    state.timer = setInterval(refreshAll, state.intervalMs);
+    window.addEventListener("resize", () => { loadChart(); loadTokenChart(); });
+  </script>
+</body>
+</html>
