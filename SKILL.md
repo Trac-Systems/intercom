@@ -113,29 +113,26 @@ Always keep the decision short and actionable.
 
 ---
 
-## Required Output Format (Strict)
+## Required Output Format
 
 Return content in this exact structure:
-
-```
-SIGNAL: <BUY|HOLD|SELL>
-RISK: <SAFE|CAUTION|BLOCK>
-DECISION: <SHORT ACTION>
+SIGNAL: HOLD
+RISK: CAUTION
+DECISION: SMALL SIZE / WAIT
 
 WHY:
-- <bullet>
-- <bullet>
+- volume is high but direction is unclear
+- liquidity is moderate
 
 FLAGS:
-- <bullet>   (optional)
+- liquidity is low compared to volume
 
 CHECKLIST:
-- <bullet>
-- <bullet>
-- <bullet>
-```
+- verify contract address (CA)
+- check liquidity depth
+- review top holders
+- start with a small test trade
 
----
 
 ## Examples
 
