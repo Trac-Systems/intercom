@@ -13,22 +13,49 @@ function clear() {
   process.stdout.write("\x1Bc");
 }
 
+function termWidth() {
+  return Math.max(60, Number(process.stdout.columns) || 80);
+}
+
+function centerLine(line, width) {
+  const w = width || termWidth();
+  const raw = String(line ?? "");
+  const pad = Math.max(0, Math.floor((w - raw.length) / 2));
+  return " ".repeat(pad) + raw;
+}
+
+function centerBlock(text, width) {
+  const w = width || termWidth();
+  return String(text ?? "")
+    .split("\n")
+    .map((l) => centerLine(l, w))
+    .join("\n");
+}
+
 function menuHeader() {
   const title = chalk.whiteBright("MAIN MENU");
   const subtitle = chalk.gray("Choose an action (Pro UI Mode)");
-  return boxen(`${title}\n${subtitle}`, {
+  const card = boxen(`${title}\n${subtitle}`, {
     padding: 1,
     borderStyle: "round",
     borderColor: "white"
   });
+  return centerBlock(card, termWidth());
+}
+
+function menuFooterHint() {
+  const hint = chalk.gray("Tip: Use arrow keys • Press Enter • Ctrl+C to exit");
+  return centerLine(hint, termWidth());
 }
 
 async function runMenu() {
-  // eslint-disable-next-line no-constant-condition
   while (true) {
     clear();
-    console.log(chalk.cyanBright("GAMBER CLI TOKEN ANALYZER"));
+
+    console.log(centerLine(chalk.cyanBright("GAMBER CLI TOKEN ANALYZER")));
+    console.log("");
     console.log(menuHeader());
+    console.log("");
 
     const { pick } = await inquirer.prompt([
       {
@@ -48,7 +75,7 @@ async function runMenu() {
 
     if (pick === "exit") {
       clear();
-      console.log(chalk.cyanBright("👋 Bye. GAMBER out."));
+      console.log(centerLine(chalk.cyanBright("👋 Bye. GAMBER out.")));
       process.exit(0);
     }
 
@@ -58,15 +85,16 @@ async function runMenu() {
       if (pick === "agent") await actionAgentSignal();
       if (pick === "settings") await actionSettings();
     } catch (err) {
-      console.log(
-        boxen(chalk.redBright(`Error: ${err?.message || err}`), {
-          padding: 1,
-          borderStyle: "round",
-          borderColor: "redBright"
-        })
-      );
+      const errBox = boxen(chalk.redBright(`Error: ${err?.message || err}`), {
+        padding: 1,
+        borderStyle: "round",
+        borderColor: "redBright"
+      });
+      console.log("\n" + centerBlock(errBox, termWidth()) + "\n");
       await inquirer.prompt([{ type: "input", name: "x", message: "Press Enter to continue..." }]);
     }
+
+    console.log("\n" + menuFooterHint() + "\n");
   }
 }
 
