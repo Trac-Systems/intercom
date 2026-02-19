@@ -2,7 +2,6 @@
 
 const inquirer = require("inquirer");
 const chalk = require("chalk");
-const boxen = require("boxen");
 
 const { actionPriceMonitor } = require("../workflows/priceMonitor");
 const { actionTokenCAAnalyze } = require("../workflows/tokenCAAnalyze");
@@ -24,37 +23,12 @@ function centerLine(line, width) {
   return " ".repeat(pad) + raw;
 }
 
-function centerBlock(text, width) {
-  const w = width || termWidth();
-  return String(text ?? "")
-    .split("\n")
-    .map((l) => centerLine(l, w))
-    .join("\n");
-}
-
-function menuHeader() {
-  const title = chalk.whiteBright("MAIN MENU");
-  const subtitle = chalk.gray("Choose an action (Pro UI Mode)");
-  const card = boxen(`${title}\n${subtitle}`, {
-    padding: 1,
-    borderStyle: "round",
-    borderColor: "white"
-  });
-  return centerBlock(card, termWidth());
-}
-
-function menuFooterHint() {
-  const hint = chalk.gray("Tip: Use arrow keys • Press Enter • Ctrl+C to exit");
-  return centerLine(hint, termWidth());
-}
-
 async function runMenu() {
   while (true) {
     clear();
 
+    // keep it minimal & clean
     console.log(centerLine(chalk.cyanBright("GAMBER CLI TOKEN ANALYZER")));
-    console.log("");
-    console.log(menuHeader());
     console.log("");
 
     const { pick } = await inquirer.prompt([
@@ -64,11 +38,11 @@ async function runMenu() {
         message: "Select:",
         pageSize: 10,
         choices: [
-          { name: "1) 📡 Live Price Monitor (CoinGecko)", value: "price" },
-          { name: "2) 🔎 Token CA Analyzer (DexScreener)", value: "ca" },
-          { name: "3) 🧠 Agent Signal (EMA/RSI)", value: "agent" },
-          { name: "4) ⚙️  Settings", value: "settings" },
-          { name: "0) ❌ Exit", value: "exit" }
+          { name: "📡 Live Price Monitor (CoinGecko)", value: "price" },
+          { name: "🔎 Token CA Analyzer (DexScreener)", value: "ca" },
+          { name: "🧠 Agent Signal (EMA/RSI)", value: "agent" },
+          { name: "⚙️  Settings", value: "settings" },
+          { name: "❌ Exit", value: "exit" }
         ]
       }
     ]);
@@ -85,16 +59,10 @@ async function runMenu() {
       if (pick === "agent") await actionAgentSignal();
       if (pick === "settings") await actionSettings();
     } catch (err) {
-      const errBox = boxen(chalk.redBright(`Error: ${err?.message || err}`), {
-        padding: 1,
-        borderStyle: "round",
-        borderColor: "redBright"
-      });
-      console.log("\n" + centerBlock(errBox, termWidth()) + "\n");
+      clear();
+      console.log(chalk.redBright(`\nError: ${err?.message || err}\n`));
       await inquirer.prompt([{ type: "input", name: "x", message: "Press Enter to continue..." }]);
     }
-
-    console.log("\n" + menuFooterHint() + "\n");
   }
 }
 
