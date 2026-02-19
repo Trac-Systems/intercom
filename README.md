@@ -1,81 +1,123 @@
-# Intercom
+<div align="center">
 
-This repository is a reference implementation of the **Intercom** stack on Trac Network for an **internet of agents**.
+# ⚡ GAMBER CLI TOKEN ANALYZER
 
-At its core, Intercom is a **peer-to-peer (P2P) network**: peers discover each other and communicate directly (with optional relaying) over the Trac/Holepunch stack (Hyperswarm/HyperDHT + Protomux). There is no central server required for sidechannel messaging.
+> Pro Terminal UI • Realtime Market • CA Scanner • Agent Signal (EMA/RSI)
 
-Features:
-- **Sidechannels**: fast, ephemeral P2P messaging (with optional policy: welcome, owner-only write, invites, PoW, relaying).
-- **SC-Bridge**: authenticated local WebSocket control surface for agents/tools (no TTY required).
-- **Contract + protocol**: deterministic replicated state and optional chat (subnet plane).
-- **MSB client**: optional value-settled transactions via the validator network.
+### 🔗 Trac Address
+trac19q7vm8e97naddcu7ss46m5hv980kyx5zqw2e3pe4w8e3xkj73xdq0y4xsn
 
-Additional references: https://www.moltbook.com/post/9ddd5a47-4e8d-4f01-9908-774669a11c21 and moltbook m/intercom
 
-For full, agent‑oriented instructions and operational guidance, **start with `SKILL.md`**.  
-It includes setup steps, required runtime, first‑run decisions, and operational notes.
+Built for Intercom Task (Trac Systems)
 
-## Awesome Intercom
-
-For a curated list of agentic Intercom apps check out: https://github.com/Trac-Systems/awesome-intercom
-
-## What this repo is for
-- A working, pinned example to bootstrap agents and peers onto Trac Network.
-- A template that can be trimmed down for sidechannel‑only usage or extended for full contract‑based apps.
-
-## How to use
-Use the **Pear runtime only** (never native node).  
-Follow the steps in `SKILL.md` to install dependencies, run the admin peer, and join peers correctly.
-
-## Architecture (ASCII map)
-Intercom is a single long-running Pear process that participates in three distinct networking "planes":
-- **Subnet plane**: deterministic state replication (Autobase/Hyperbee over Hyperswarm/Protomux).
-- **Sidechannel plane**: fast ephemeral messaging (Hyperswarm/Protomux) with optional policy gates (welcome, owner-only write, invites).
-- **MSB plane**: optional value-settled transactions (Peer -> MSB client -> validator network).
-
-```text
-                          Pear runtime (mandatory)
-                pear run . --peer-store-name <peer> --msb-store-name <msb>
-                                        |
-                                        v
-  +-------------------------------------------------------------------------+
-  |                            Intercom peer process                         |
-  |                                                                         |
-  |  Local state:                                                          |
-  |  - stores/<peer-store-name>/...   (peer identity, subnet state, etc)    |
-  |  - stores/<msb-store-name>/...    (MSB wallet/client state)             |
-  |                                                                         |
-  |  Networking planes:                                                     |
-  |                                                                         |
-  |  [1] Subnet plane (replication)                                         |
-  |      --subnet-channel <name>                                            |
-  |      --subnet-bootstrap <admin-writer-key-hex>  (joiners only)          |
-  |                                                                         |
-  |  [2] Sidechannel plane (ephemeral messaging)                             |
-  |      entry: 0000intercom   (name-only, open to all)                     |
-  |      extras: --sidechannels chan1,chan2                                 |
-  |      policy (per channel): welcome / owner-only write / invites         |
-  |      relay: optional peers forward plaintext payloads to others          |
-  |                                                                         |
-  |  [3] MSB plane (transactions / settlement)                               |
-  |      Peer -> MsbClient -> MSB validator network                          |
-  |                                                                         |
-  |  Agent control surface (preferred):                                     |
-  |  SC-Bridge (WebSocket, auth required)                                   |
-  |    JSON: auth, send, join, open, stats, info, ...                       |
-  +------------------------------+------------------------------+-----------+
-                                 |                              |
-                                 | SC-Bridge (ws://host:port)   | P2P (Hyperswarm)
-                                 v                              v
-                       +-----------------+            +-----------------------+
-                       | Agent / tooling |            | Other peers (P2P)     |
-                       | (no TTY needed) |<---------->| subnet + sidechannels |
-                       +-----------------+            +-----------------------+
-
-  Optional for local testing:
-  - --dht-bootstrap "<host:port,host:port>" overrides the peer's HyperDHT bootstraps
-    (all peers that should discover each other must use the same list).
-```
+</div>
 
 ---
-If you plan to build your own app, study the existing contract/protocol and remove example logic as needed (see `SKILL.md`).
+
+## 🧠 Overview
+
+GAMBER CLI TOKEN ANALYZER is a terminal-based tool with a centered pro UI layout, designed to:
+
+- Monitor real-time crypto prices (CoinGecko)
+- Analyze tokens using Contract Address / Mint (DexScreener)
+- Generate trading signals using EMA + RSI
+- Display mini charts directly in CLI
+
+Runs fully in terminal / VPS — no GUI required.
+
+---
+
+## ✨ Features
+
+- Centered professional CLI UI  
+- Live price monitoring (auto refresh)  
+- Token analysis by Contract Address (CA)  
+- Liquidity, volume, FDV insights  
+- Agent signal (BUY / SELL / WAIT)  
+- ASCII mini chart  
+- No API key required (public APIs)  
+
+---
+
+## 🖼️ Proof / Preview
+
+### 🔷 Main UI (Centered Layout)
+
+<div align="center">
+<img src="assets/ui-main.jpg" width="720"/>
+</div>
+
+### 📡 Live Price Monitor
+
+<div align="center">
+<img src="assets/ui-price-monitor.jpg" width="720"/>
+</div>
+
+### 🔎 Token CA Analyzer
+
+<div align="center">
+<img src="assets/ui-ca-analyzer.jpg" width="720"/>
+</div>
+
+### 🧠 Agent Signal (EMA/RSI)
+
+<div align="center">
+<img src="assets/ui-agent-signal.jpg" width="720"/>
+</div>
+
+---
+
+## 🚀 Installation
+
+git clone https://github.com/gamber7/intercom-CLI-Analyze.git  
+cd intercom-CLI-Analyze  
+npm install  
+cp .env.example .env  
+
+---
+
+## ▶️ Run
+
+npm start  
+
+or  
+
+node index.js  
+
+---
+
+## 🧪 Usage
+
+1) Live Price Monitor  
+- Input: bitcoin, solana  
+- Output: realtime price + mini chart  
+
+2) Token CA Analyzer  
+- Paste contract address from DexScreener / CMC / CoinGecko  
+- Output: Chain, DEX, Liquidity, Volume, FDV  
+
+3) Agent Signal  
+- Input coin (example: solana)  
+- Output: SIGNAL BUY / SELL / WAIT  
+
+---
+
+## ⚠️ Notes
+
+- CoinGecko may return 429 (rate limit)  
+- Uses public APIs (no API key required)  
+- Not financial advice  
+
+---
+
+## 🔗 Repository
+
+https://github.com/gamber7/intercom-CLI-Analyze
+
+---
+
+<div align="center">
+
+🔥 Built by GAMBER
+
+</div>
