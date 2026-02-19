@@ -5,8 +5,6 @@
 
 ---
 
-## 🆔 Trac Identity
-
 - **Trac Address**: trac1dl85m4zfwya0hgajw6r37s0dcvfct2cszs7wjw8fzp42stlx0dsqcp6zqy
 
 ---
