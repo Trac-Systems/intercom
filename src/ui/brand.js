@@ -33,6 +33,7 @@ function hr() {
 
 function buildTitleBlock() {
   const w = termWidth();
+  const innerWidth = Math.min(76, w - 8);
 
   const gamber = figlet.textSync("GAMBER", {
     font: "ANSI Shadow",
@@ -46,41 +47,23 @@ function buildTitleBlock() {
     verticalLayout: "default"
   });
 
-  const centered = centerBlock(chalk.cyanBright(gamber) + "\n" + chalk.whiteBright(sub), w);
+  const content = centerBlock(chalk.cyanBright(gamber) + "\n" + chalk.whiteBright(sub), innerWidth);
 
-  // Put the centered ASCII inside a box that is also visually centered
-  // We keep a fixed-ish inner width so it looks consistent across terminals.
-  const innerWidth = Math.min(76, w - 8);
-  const boxed = boxen(centerBlock(chalk.cyanBright(gamber) + "\n" + chalk.whiteBright(sub), innerWidth), {
+  const boxed = boxen(content, {
     padding: 1,
     borderStyle: "round",
     borderColor: "cyanBright"
   });
 
-  // Now center the whole box as a block
   return centerBlock(boxed, w);
 }
 
 async function showBootScreen() {
   clear();
-
   console.log(buildTitleBlock());
   console.log(centerLine(chalk.gray("Price Monitor • CA Analyzer (DexScreener) • Agent Signal (EMA/RSI)")));
   console.log(hr());
-
-  const w = termWidth();
-  const hotkeys = boxen(
-    [
-      chalk.whiteBright("Hotkeys"),
-      chalk.gray("• Ctrl + C : Exit"),
-      chalk.gray("• Enter   : Select"),
-      chalk.gray("• ↑ / ↓   : Navigate")
-    ].join("\n"),
-    { padding: 1, borderStyle: "round", borderColor: "gray" }
-  );
-
-  console.log(centerBlock(hotkeys, w));
-  console.log("");
+  console.log(""); // no hotkeys box
 }
 
 module.exports = { showBootScreen };
