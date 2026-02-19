@@ -1,26 +1,25 @@
 {
-  "name": "contract-test-latest",
-  "version": "0.0.1",
-  "type": "module",
+  "name": "intercom-cli-analyze",
+  "version": "1.0.0",
+  "description": "GAMBER CLI TOKEN ANALYZER — Price Monitor • CA Analyzer • Agent Signal",
   "main": "index.js",
-  "pear": {
-    "name": "contract-test-latest",
-    "type": "terminal"
+  "type": "commonjs",
+  "bin": {
+    "gamber": "index.js"
   },
+  "scripts": {
+    "start": "node index.js",
+    "dev": "node index.js"
+  },
+  "license": "MIT",
   "dependencies": {
-    "b4a": "^1.6.7",
-    "bare-ws": "2.0.3",
-    "compact-encoding": "^2.18.0",
-    "crypto": "npm:bare-node-crypto",
-    "fs": "npm:bare-node-fs",
-    "path": "npm:bare-node-path",
-    "protomux": "^3.10.1",
-    "trac-msb": "git+https://github.com/Trac-Systems/main_settlement_bus.git#5088921",
-    "trac-peer": "git+https://github.com/Trac-Systems/trac-peer.git#d108f52",
-    "trac-wallet": "1.0.1",
-    "util": "npm:bare-node-util"
-  },
-  "overrides": {
-    "trac-wallet": "1.0.1"
+    "axios": "^1.7.7",
+    "boxen": "^7.1.1",
+    "chalk": "^4.1.2",
+    "cli-table3": "^0.6.5",
+    "dotenv": "^16.4.5",
+    "figlet": "^1.7.0",
+    "inquirer": "^9.2.23",
+    "ora": "^5.4.1"
   }
 }
