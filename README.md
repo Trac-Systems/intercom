@@ -1,81 +1,187 @@
-# Intercom
+# ⚡ Intercom Real Price Analyzer
 
-This repository is a reference implementation of the **Intercom** stack on Trac Network for an **internet of agents**.
+> Realtime Web Dashboard + Agent Signal + CA Token Scanner  
+> Built for **Intercom Task (Trac Systems)**
 
-At its core, Intercom is a **peer-to-peer (P2P) network**: peers discover each other and communicate directly (with optional relaying) over the Trac/Holepunch stack (Hyperswarm/HyperDHT + Protomux). There is no central server required for sidechannel messaging.
+---
 
-Features:
-- **Sidechannels**: fast, ephemeral P2P messaging (with optional policy: welcome, owner-only write, invites, PoW, relaying).
-- **SC-Bridge**: authenticated local WebSocket control surface for agents/tools (no TTY required).
-- **Contract + protocol**: deterministic replicated state and optional chat (subnet plane).
-- **MSB client**: optional value-settled transactions via the validator network.
+## 🆔 Trac Identity
 
-Additional references: https://www.moltbook.com/post/9ddd5a47-4e8d-4f01-9908-774669a11c21 and moltbook m/intercom
+- **Trac Address**: trac1dl85m4zfwya0hgajw6r37s0dcvfct2cszs7wjw8fzp42stlx0dsqcp6zqy
 
-For full, agent‑oriented instructions and operational guidance, **start with `SKILL.md`**.  
-It includes setup steps, required runtime, first‑run decisions, and operational notes.
+---
 
-## Awesome Intercom
+## 🧠 Overview
 
-For a curated list of agentic Intercom apps check out: https://github.com/Trac-Systems/awesome-intercom
+This project is a **localhost-based trading dashboard** that provides:
 
-## What this repo is for
-- A working, pinned example to bootstrap agents and peers onto Trac Network.
-- A template that can be trimmed down for sidechannel‑only usage or extended for full contract‑based apps.
+- Real-time market data (CoinGecko)
+- Token analysis via CA / Mint (DexScreener)
+- Lightweight trading agent (EMA + RSI + Momentum)
+- Realtime feed via WebSocket
 
-## How to use
-Use the **Pear runtime only** (never native node).  
-Follow the steps in `SKILL.md` to install dependencies, run the admin peer, and join peers correctly.
+All in a **clean dark UI (no CLI required)**.
 
-## Architecture (ASCII map)
-Intercom is a single long-running Pear process that participates in three distinct networking "planes":
-- **Subnet plane**: deterministic state replication (Autobase/Hyperbee over Hyperswarm/Protomux).
-- **Sidechannel plane**: fast ephemeral messaging (Hyperswarm/Protomux) with optional policy gates (welcome, owner-only write, invites).
-- **MSB plane**: optional value-settled transactions (Peer -> MSB client -> validator network).
+---
 
-```text
-                          Pear runtime (mandatory)
-                pear run . --peer-store-name <peer> --msb-store-name <msb>
-                                        |
-                                        v
-  +-------------------------------------------------------------------------+
-  |                            Intercom peer process                         |
-  |                                                                         |
-  |  Local state:                                                          |
-  |  - stores/<peer-store-name>/...   (peer identity, subnet state, etc)    |
-  |  - stores/<msb-store-name>/...    (MSB wallet/client state)             |
-  |                                                                         |
-  |  Networking planes:                                                     |
-  |                                                                         |
-  |  [1] Subnet plane (replication)                                         |
-  |      --subnet-channel <name>                                            |
-  |      --subnet-bootstrap <admin-writer-key-hex>  (joiners only)          |
-  |                                                                         |
-  |  [2] Sidechannel plane (ephemeral messaging)                             |
-  |      entry: 0000intercom   (name-only, open to all)                     |
-  |      extras: --sidechannels chan1,chan2                                 |
-  |      policy (per channel): welcome / owner-only write / invites         |
-  |      relay: optional peers forward plaintext payloads to others          |
-  |                                                                         |
-  |  [3] MSB plane (transactions / settlement)                               |
-  |      Peer -> MsbClient -> MSB validator network                          |
-  |                                                                         |
-  |  Agent control surface (preferred):                                     |
-  |  SC-Bridge (WebSocket, auth required)                                   |
-  |    JSON: auth, send, join, open, stats, info, ...                       |
-  +------------------------------+------------------------------+-----------+
-                                 |                              |
-                                 | SC-Bridge (ws://host:port)   | P2P (Hyperswarm)
-                                 v                              v
-                       +-----------------+            +-----------------------+
-                       | Agent / tooling |            | Other peers (P2P)     |
-                       | (no TTY needed) |<---------->| subnet + sidechannels |
-                       +-----------------+            +-----------------------+
+## 🔗 Trac Integration
 
-  Optional for local testing:
-  - --dht-bootstrap "<host:port,host:port>" overrides the peer's HyperDHT bootstraps
-    (all peers that should discover each other must use the same list).
+- **Sidechannels**: fast, ephemeral P2P messaging
+- **SC-Bridge**: local WebSocket control for agents/tools
+- **Protocol Ready**: deterministic state + agent communication
+- **No CLI Needed**: fully web-based control
+
+---
+
+## ⚙️ Features
+
+- ⚡ **Realtime Price Feed (WebSocket)**
+- 🔎 **Token Checker by CA / Mint Address**
+- 📊 **Auto Technical Analysis (EMA, RSI, Momentum)**
+- 🤖 **Agent Signal (BUY / SELL / WAIT)**
+- 🌐 **DexScreener Integration**
+- 🎯 **Clean Dark UI (Pro Style)**
+
+---
+
+## 🧩 Architecture
+
+```
+Frontend (Vanilla JS UI)
+        │
+        ▼
+Backend (Node.js + Express)
+        │
+        ├── CoinGecko API
+        ├── DexScreener API
+        └── WebSocket Server
 ```
 
 ---
-If you plan to build your own app, study the existing contract/protocol and remove example logic as needed (see `SKILL.md`).
+
+## 🚀 Run Locally
+
+### 1. Clone Repo
+
+```bash
+git clone https://github.com/comand87/intercom-agent-console.git
+cd intercom-agent-console
+```
+
+### 2. Install Dependencies
+
+```bash
+npm install
+```
+
+### 3. Run Server
+
+```bash
+npm start
+```
+
+### 4. Open Dashboard
+
+```
+http://localhost:3000
+```
+
+---
+
+## 🔍 Token Checker (CA)
+
+Supports:
+
+- Solana (Mint Address)
+- EVM (Contract Address)
+
+Returns:
+
+- Price
+- Liquidity
+- Volume
+- Pair info
+- DexScreener link
+
+---
+
+## 🤖 Agent Logic
+
+The trading agent uses:
+
+- EMA crossover
+- RSI threshold
+- Momentum strength
+
+### Signal Output:
+
+- 🟢 BUY  
+- 🔴 SELL  
+- 🟡 WAIT  
+
+---
+
+## 📡 Realtime System
+
+- WebSocket-based updates
+- No refresh needed
+- Lightweight + fast
+
+---
+
+## 🛡️ Safety
+
+- No wallet required
+- No transaction execution
+- Read-only analysis mode
+- Safe for testing tokens
+
+---
+
+## 📸 Proof (Live Dashboard)
+
+### 💻 Full Dashboard View
+![Full Dashboard](./assets/full-dashboard.jpg)
+
+### 🧠 Market Analyzer + Agent Signal
+![Market Analyzer](./assets/market-analyzer.jpg)
+
+### 🔎 Token Checker (CA / Mint)
+![Token Checker](./assets/token-checker.jpg)
+
+### 🤖 Agent Feed (Realtime Logs)
+![Agent Feed](./assets/agent-feed.jpg)
+
+---
+
+## 🧪 Future Upgrade
+
+- SC-Bridge control panel
+- Swap simulation
+- Multi-chain support (SOL + EVM)
+- Copy trading agent
+- Rug / honeypot detector
+
+---
+
+## 📄 License
+
+MIT License
+
+---
+
+## 👑 Credits
+
+Built by **@comand87**  
+For **Intercom Task - Trac Systems**
+
+---
+
+## 💥 Notes
+
+This is a **functional demo + prototype** showcasing:
+
+- Realtime data processing  
+- Agent-based trading signals  
+- SC-Bridge-ready architecture  
+
