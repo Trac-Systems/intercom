@@ -1,4 +1,12 @@
-# Intercom
+# Awesome Intercom
+
+**My Intercom Fork Submission**
+
+Nama : pujogresik
+Github : https://github.com/pujogresik/
+Project : IntercomSwap Fork + custom App
+
+## My Trac Address : trac1m6d4s6gh054vk0ql8xq07rx6vhhkcr73rxkf36jupw9sg9mck9ds0ualhl
 
 This repository is a reference implementation of the **Intercom** stack on Trac Network for an **internet of agents**.
 
