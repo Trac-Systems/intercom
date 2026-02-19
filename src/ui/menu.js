@@ -40,7 +40,6 @@ async function runMenu() {
           { name: "1) 📡 Live Price Monitor (CoinGecko)", value: "price" },
           { name: "2) 🔎 Token CA Analyzer (DexScreener)", value: "ca" },
           { name: "3) 🧠 Agent Signal (EMA/RSI)", value: "agent" },
-          new inquirer.Separator(),
           { name: "4) ⚙️  Settings", value: "settings" },
           { name: "0) ❌ Exit", value: "exit" }
         ]
