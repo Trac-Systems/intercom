@@ -5,7 +5,7 @@
 > Pro Terminal UI • Realtime Market • CA Scanner • Agent Signal (EMA/RSI)
 
 ### 🔗 Trac Address
-
+trac19q7vm8e97naddcu7ss46m5hv980kyx5zqw2e3pe4w8e3xkj73xdq0y4xsn
 
 
 Built for Intercom Task (Trac Systems)
