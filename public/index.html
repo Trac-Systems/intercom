@@ -1,0 +1,151 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width,initial-scale=1" />
+  <title>Intercom Dashboard Bot (localhost)</title>
+  <link rel="stylesheet" href="./style.css" />
+</head>
+<body>
+  <div class="app">
+    <header class="topbar">
+      <div class="brand">
+        <div class="bolt">⚡</div>
+        <div class="brandText">
+          <div class="title">Intercom Dashboard Bot <span class="muted">(localhost)</span></div>
+          <div class="subtitle">Clean UI: SAFE (green), CAUTION (yellow), BLOCK (red). Realtime via WS.</div>
+        </div>
+      </div>
+
+      <div class="topActions">
+        <div class="pill" id="wsStatus">WS: <span class="dot dot-warn"></span> connecting</div>
+        <button class="btn" id="btnRefresh">Refresh</button>
+      </div>
+    </header>
+
+    <main class="grid">
+      <!-- LEFT -->
+      <section class="card">
+        <div class="cardHead">
+          <div>
+            <div class="cardTitle">Market Analyzer</div>
+            <div class="cardSub">CoinGecko chart + Agent (EMA/RSI)</div>
+          </div>
+          <div class="row">
+            <select class="select" id="marketId">
+              <option value="bitcoin">BTC</option>
+              <option value="ethereum">ETH</option>
+              <option value="solana">SOL</option>
+            </select>
+            <button class="btn btnGhost" id="btnLoadMarket">Load</button>
+          </div>
+        </div>
+
+        <div class="kpis">
+          <div class="kpi">
+            <div class="kLabel">Last</div>
+            <div class="kValue" id="mLast">$-</div>
+          </div>
+          <div class="kpi">
+            <div class="kLabel">Signal</div>
+            <div class="kValue" id="mSignal">-</div>
+          </div>
+          <div class="kpi">
+            <div class="kLabel">Confidence</div>
+            <div class="kValue" id="mConf">-</div>
+          </div>
+          <div class="kpi">
+            <div class="kLabel">Updated</div>
+            <div class="kValue small" id="mUpdated">-</div>
+          </div>
+        </div>
+
+        <div class="badgeRow">
+          <div class="badge" id="mBadge">Waiting…</div>
+          <div class="muted small" id="mReason"></div>
+        </div>
+
+        <div class="chartWrap">
+          <canvas id="marketChart" width="980" height="320"></canvas>
+          <div class="chartFooter">
+            <span class="muted">CoinGecko market_chart → Canvas line chart.</span>
+            <span class="muted" id="mMinMax"></span>
+          </div>
+        </div>
+      </section>
+
+      <!-- RIGHT -->
+      <section class="stack">
+        <!-- Token checker -->
+        <section class="card">
+          <div class="cardHead">
+            <div>
+              <div class="cardTitle">Token Checker by CA</div>
+              <div class="cardSub">DexScreener CA lookup (liquidity, 24h change, risk label)</div>
+            </div>
+          </div>
+
+          <div class="formRow">
+            <input class="input" id="caInput" placeholder="Paste Contract Address (EVM) or Mint/CA (SOL)" />
+            <button class="btn" id="btnCheckCa">Check</button>
+          </div>
+
+          <div class="tokenGrid">
+            <div class="tItem">
+              <div class="tLabel">Token</div>
+              <div class="tValue" id="tName">-</div>
+            </div>
+            <div class="tItem">
+              <div class="tLabel">Price</div>
+              <div class="tValue" id="tPrice">-</div>
+            </div>
+            <div class="tItem">
+              <div class="tLabel">Liquidity</div>
+              <div class="tValue" id="tLiq">-</div>
+            </div>
+            <div class="tItem">
+              <div class="tLabel">24h</div>
+              <div class="tValue" id="t24h">-</div>
+            </div>
+          </div>
+
+          <div class="badgeRow">
+            <div class="badge" id="tBadge">Waiting…</div>
+            <div class="muted small" id="tReason"></div>
+          </div>
+
+          <div class="linkRow">
+            <a class="link" id="tLink" href="#" target="_blank" rel="noreferrer">Open Pair</a>
+            <span class="muted small" id="tMeta"></span>
+          </div>
+        </section>
+
+        <!-- Agent chat / logs -->
+        <section class="card">
+          <div class="cardHead">
+            <div>
+              <div class="cardTitle">Agent Feed</div>
+              <div class="cardSub">Realtime logs + quick callouts</div>
+            </div>
+            <div class="row">
+              <button class="btn btnGhost" id="btnClearLogs">Clear</button>
+            </div>
+          </div>
+
+          <div class="logBox" id="logBox"></div>
+
+          <div class="hint">
+            Tip: kalau CoinGecko 429, biarin aja — server udah cache + cooldown, nanti normal.
+          </div>
+        </section>
+      </section>
+    </main>
+
+    <footer class="footer">
+      <div class="muted small">Localhost only. No private keys stored. Data sources: CoinGecko + DexScreener.</div>
+    </footer>
+  </div>
+
+  <script src="./app.js"></script>
+</body>
+</html>
