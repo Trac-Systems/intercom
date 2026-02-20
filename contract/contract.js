@@ -1,240 +1,247 @@
-import {Contract} from 'trac-peer'
+/**
+ * TracOracle — Contract (deterministic state machine)
+ *
+ * Market lifecycle:
+ *   open → staking_closed → resolved → payouts_complete
+ *           (stake cutoff)  (oracle resolves YES/NO)
+ *
+ * Every peer runs this identically. No disagreements possible.
+ */
 
-class SampleContract extends Contract {
-    /**
-     * Extending from Contract inherits its capabilities and allows you to define your own contract.
-     * The contract supports the corresponding protocol. Both files come in pairs.
-     *
-     * Instances of this class run in contract context. The constructor is only called once on Peer
-     * instantiation.
-     *
-     * Please avoid using the following in your contract functions:
-     *
-     * No try-catch
-     * No throws
-     * No random values
-     * No http / api calls
-     * No super complex, costly calculations
-     * No massive storage of data.
-     * Never, ever modify "this.op" or "this.value", only read from it and use safeClone to modify.
-     * ... basically nothing that can lead to inconsistencies akin to Blockchain smart contracts.
-     *
-     * Running a contract on Trac gives you a lot of freedom, but it comes with additional responsibility.
-     * Make sure to benchmark your contract performance before release.
-     *
-     * If you need to inject data from "outside", you can utilize the Feature class and create your own
-     * oracles. Instances of Feature can be injected into the main Peer instance and enrich your contract.
-     *
-     * In the current version (Release 1), there is no inter-contract communication yet.
-     * This means it's not suitable yet for token standards.
-     * However, it's perfectly equipped for interoperability or standalone tasks.
-     *
-     * this.protocol: the peer's instance of the protocol managing contract concerns outside of its execution.
-     * this.options: the option stack passed from Peer instance
-     *
-     * @param protocol
-     * @param options
-     */
-    constructor(protocol, options = {}) {
-        // calling super and passing all parameters is required.
-        super(protocol, options);
+'use strict'
 
-        // simple function registration.
-        // since this function does not expect value payload, no need to sanitize.
-        // note that the function must match the type as set in Protocol.mapTxCommand()
-        this.addFunction('storeSomething');
+import crypto from 'crypto'
 
-        // now we register the function with a schema to prevent malicious inputs.
-        // the contract uses the schema generator "fastest-validator" and can be found on npmjs.org.
-        //
-        // Since this is the "value" as of Protocol.mapTxCommand(), we must take it full into account.
-        // $$strict : true tells the validator for the object structure to be precise after "value".
-        //
-        // note that the function must match the type as set in Protocol.mapTxCommand()
-        this.addSchema('submitSomething', {
-            value : {
-                $$strict : true,
-                $$type: "object",
-                op : { type : "string", min : 1, max: 128 },
-                some_key : { type : "string", min : 1, max: 128 }
-            }
-        });
+export const OUTCOME = { YES: 'yes', NO: 'no', VOID: 'void' }
+export const STATE   = { OPEN: 'open', CLOSED: 'closed', RESOLVED: 'resolved', VOID: 'void' }
 
-        // in preparation to add an external Feature (aka oracle), we add a loose schema to make sure
-        // the Feature key is given properly. it's not required, but showcases that even these can be
-        // sanitized.
-        this.addSchema('feature_entry', {
-            key : { type : "string", min : 1, max: 256 },
-            value : { type : "any" }
-        });
+export default class Contract {
 
-        // read helpers (no state writes)
-        this.addFunction('readSnapshot');
-        this.addFunction('readChatLast');
-        this.addFunction('readTimer');
-        this.addSchema('readKey', {
-            value : {
-                $$strict : true,
-                $$type: "object",
-                op : { type : "string", min : 1, max: 128 },
-                key : { type : "string", min : 1, max: 256 }
-            }
-        });
+  constructor(db) {
+    this.db = db   // Trac-provided persistent K/V store
+  }
 
-        // now we are registering the timer feature itself (see /features/time/ in package).
-        // note the naming convention for the feature name <feature-name>_feature.
-        // the feature name is given in app setup, when passing the feature classes.
-        const _this = this;
+  // ── WRITE ──────────────────────────────────────────────────────────────────
 
-        // this feature registers incoming data from the Feature and if the right key is given,
-        // stores it into the smart contract storage.
-        // the stored data can then be further used in regular contract functions.
-        this.addFeature('timer_feature', async function(){
-            if(false === _this.check.validateSchema('feature_entry', _this.op)) return;
-            if(_this.op.key === 'currentTime') {
-                if(null === await _this.get('currentTime')) console.log('timer started at', _this.op.value);
-                await _this.put(_this.op.key, _this.op.value);
-            }
-        });
+  /**
+   * Create a new prediction market.
+   * op: market_create
+   * { question, category, closes_in, resolve_by, oracle_address }
+   */
+  async market_create({ creator, question, category, closes_in, resolve_by, oracle_address }) {
+    if (!question || question.trim().length < 10) throw new Error('question must be >= 10 chars')
+    if (!oracle_address)                          throw new Error('oracle_address required')
 
-        // last but not least, you may intercept messages from the built-in
-        // chat system, and perform actions similar to features to enrich your
-        // contract. check the _this.op value after you enabled the chat system
-        // and posted a few messages.
-        this.messageHandler(async function(){
-            if(_this.op?.type === 'msg' && typeof _this.op.msg === 'string'){
-                const currentTime = await _this.get('currentTime');
-                await _this.put('chat_last', {
-                    msg: _this.op.msg,
-                    address: _this.op.address ?? null,
-                    at: currentTime ?? null
-                });
-            }
-            console.log('message triggered contract', _this.op);
-        });
+    const CATEGORIES = ['crypto', 'sports', 'politics', 'science', 'tech', 'other']
+    if (!CATEGORIES.includes(category)) throw new Error(`category must be one of: ${CATEGORIES.join(', ')}`)
+
+    const now        = Date.now()
+    const closes_at  = now + Math.min(Math.max(closes_in  || 3600,  60),  2592000) * 1000  // 1min–30days
+    const resolve_at = now + Math.min(Math.max(resolve_by || 7200, 120), 5184000) * 1000  // 2min–60days
+
+    if (resolve_at <= closes_at) throw new Error('resolve_by must be after closes_in')
+
+    const id = crypto.randomUUID()
+
+    const market = {
+      id,
+      creator,
+      question:       question.trim(),
+      category,
+      oracle_address,
+      state:          STATE.OPEN,
+      outcome:        null,
+      closes_at,
+      resolve_at,
+      created_at:     now,
+      updated_at:     now,
+      // Stake pools
+      yes_pool:       0,   // total TNK staked YES
+      no_pool:        0,   // total TNK staked NO
+      yes_stakers:    {},  // { address: amount }
+      no_stakers:     {},  // { address: amount }
+      claimed:        {},  // { address: true }
     }
 
-    /**
-     * A simple contract function without values (=no parameters).
-     *
-     * Contract functions must be registered through either "this.addFunction" or "this.addSchema"
-     * or it won't execute upon transactions. "this.addFunction" does not sanitize values, so it should be handled with
-     * care or be used when no payload is to be expected.
-     *
-     * Schema is recommended to sanitize incoming data from the transaction payload.
-     * The type of payload data depends on your protocol.
-     *
-     * This particular function does not expect any payload, so it's fine to be just registered using "this.addFunction".
-     *
-     * However, as you can see below, what it does is checking if an entry for key "something" exists already.
-     * With the very first tx executing it, it will return "null" (default value of this.get if no value found).
-     * From the 2nd tx onwards, it will print the previously stored value "there is something".
-     *
-     * It is recommended to check for null existence before using put to avoid duplicate content.
-     *
-     * As a rule of thumb, all "this.put()" should go at the end of function execution to avoid code security issues.
-     *
-     * Putting data is atomic, should a Peer with a contract interrupt, the put won't be executed.
-     */
-    async storeSomething(){
-        const something = await this.get('something');
+    await this.db.put(`market:${id}`, JSON.stringify(market))
+    await this._add_to_index(id, STATE.OPEN, category)
 
-        console.log('is there already something?', something);
+    return { ok: true, market_id: id, market }
+  }
 
-        if(null === something) {
-            await this.put('something', 'there is something');
-        }
+  /**
+   * Stake TNK on a market outcome.
+   * op: market_stake
+   * { market_id, side: 'yes'|'no', amount }
+   */
+  async market_stake({ staker, market_id, side, amount }) {
+    const market = await this._require_market(market_id)
+
+    if (market.state !== STATE.OPEN)      throw new Error('market is not open for staking')
+    if (Date.now() > market.closes_at)    throw new Error('staking period has ended')
+    if (!['yes','no'].includes(side))     throw new Error("side must be 'yes' or 'no'")
+    if (!amount || amount <= 0)           throw new Error('amount must be > 0')
+    if (market.oracle_address === staker) throw new Error('oracle cannot stake on their own market')
+
+    const pool_key    = `${side}_pool`
+    const stakers_key = `${side}_stakers`
+
+    market[pool_key]   += amount
+    market[stakers_key][staker] = (market[stakers_key][staker] || 0) + amount
+    market.updated_at  = Date.now()
+
+    // Close staking if past closes_at (handled here lazily too)
+    if (Date.now() > market.closes_at) {
+      market.state = STATE.CLOSED
+      await this._update_index(market_id, STATE.CLOSED)
     }
 
-    /**
-     * Now we are using the schema-validated function defined in the constructor.
-     *
-     * The function also showcases some of the handy features like safe functions
-     * to prevent throws and safe bigint/decimal conversion.
-     */
-    async submitSomething(){
-        // the value of some_key shouldn't be empty, let's check that
-        if(this.value.some_key === ''){
-            return new Error('Cannot be empty');
-            // alternatively false for generic errors:
-            // return false;
-        }
+    await this.db.put(`market:${market_id}`, JSON.stringify(market))
 
-        // of course the same works with assert (always use this.assert)
-        this.assert(this.value.some_key !== '', new Error('Cannot be empty'));
+    return { ok: true, side, amount, yes_pool: market.yes_pool, no_pool: market.no_pool }
+  }
 
-        // btw, please use safeBigInt provided by the contract protocol's superclass
-        // to calculate big integers:
-        const bigint = this.protocol.safeBigInt("1000000000000000000");
+  /**
+   * Oracle resolves the market.
+   * op: market_resolve
+   * { market_id, outcome: 'yes'|'no'|'void' }
+   */
+  async market_resolve({ resolver, market_id, outcome }) {
+    const market = await this._require_market(market_id)
 
-        // making sure it didn't fail
-        this.assert(bigint !== null);
+    if (market.state === STATE.RESOLVED)        throw new Error('already resolved')
+    if (market.state === STATE.VOID)            throw new Error('market is void')
+    if (market.oracle_address !== resolver)     throw new Error('only the designated oracle can resolve')
+    if (!Object.values(OUTCOME).includes(outcome)) throw new Error("outcome must be 'yes', 'no', or 'void'")
 
-        // you can also convert a bigint string into its decimal representation (as string)
-        const decimal = this.protocol.fromBigIntString(bigint.toString(), 18);
+    market.state      = outcome === OUTCOME.VOID ? STATE.VOID : STATE.RESOLVED
+    market.outcome    = outcome
+    market.updated_at = Date.now()
 
-        // and back into a bigint string
-        const bigint_string = this.protocol.toBigIntString(decimal, 18);
+    await this.db.put(`market:${market_id}`, JSON.stringify(market))
+    await this._update_index(market_id, market.state)
 
-        // let's clone the value
-        const cloned = this.protocol.safeClone(this.value);
+    return { ok: true, outcome, yes_pool: market.yes_pool, no_pool: market.no_pool }
+  }
 
-        // we want to pass the time from the timer feature.
-        // since mmodifications of this.value is not allowed, add this to the clone instead for storing:
-        cloned['timestamp'] = await this.get('currentTime');
+  /**
+   * Claim winnings after resolution.
+   * op: market_claim
+   * { market_id }
+   */
+  async market_claim({ claimant, market_id }) {
+    const market = await this._require_market(market_id)
 
-        // making sure it didn't fail (be aware of false-positives if null is passed to safeClone)
-        this.assert(cloned !== null);
+    if (market.state !== STATE.RESOLVED && market.state !== STATE.VOID) {
+      throw new Error('market has not been resolved yet')
+    }
+    if (market.claimed[claimant]) throw new Error('already claimed')
 
-        // and now let's stringify the cloned value
-        const stringified = this.protocol.safeJsonStringify(cloned);
+    let payout = 0
 
-        // and, you guessed it, best is to assert against null once more
-        this.assert(stringified !== null);
+    if (market.outcome === OUTCOME.VOID) {
+      // Full refund to everyone
+      payout  = (market.yes_stakers[claimant] || 0) + (market.no_stakers[claimant] || 0)
+    } else {
+      const winning_side    = market.outcome                          // 'yes' or 'no'
+      const winning_pool    = market[`${winning_side}_pool`]
+      const losing_pool     = market[`${winning_side === 'yes' ? 'no' : 'yes'}_pool`]
+      const my_winning_stake = market[`${winning_side}_stakers`][claimant] || 0
 
-        // and guess we are parsing it back
-        const parsed = this.protocol.safeJsonParse(stringified);
+      if (my_winning_stake === 0) throw new Error('you did not stake on the winning side')
 
-        // parsing the json is a bit different: instead of null, we check against undefined:
-        this.assert(parsed !== undefined);
-
-        // finally we are storing what address submitted the tx and what the value was
-        await this.put('submitted_by/'+this.address, parsed.some_key);
-
-        // printing into the terminal works, too of course:
-        console.log('submitted by', this.address, parsed);
+      // Proportional share: my_stake / winning_pool × total_pool
+      const total_pool = winning_pool + losing_pool
+      payout = Math.floor((my_winning_stake / winning_pool) * total_pool)
     }
 
-    async readSnapshot(){
-        const something = await this.get('something');
-        const currentTime = await this.get('currentTime');
-        const msgl = await this.get('msgl');
-        const msg0 = await this.get('msg/0');
-        const msg1 = await this.get('msg/1');
-        console.log('snapshot', {
-            something,
-            currentTime,
-            msgl: msgl ?? 0,
-            msg0,
-            msg1
-        });
-    }
+    if (payout === 0) throw new Error('nothing to claim')
 
-    async readKey(){
-        const key = this.value?.key;
-        const value = key ? await this.get(key) : null;
-        console.log(`readKey ${key}:`, value);
-    }
+    market.claimed[claimant] = true
+    market.updated_at        = Date.now()
+    await this.db.put(`market:${market_id}`, JSON.stringify(market))
 
-    async readChatLast(){
-        const last = await this.get('chat_last');
-        console.log('chat_last:', last);
-    }
+    // NOTE: actual TNK transfer via MSB triggered from protocol.js
+    return { ok: true, payout, claimant }
+  }
 
-    async readTimer(){
-        const currentTime = await this.get('currentTime');
-        console.log('currentTime:', currentTime);
+  // ── READ ───────────────────────────────────────────────────────────────────
+
+  async market_list({ category, state, limit } = {}) {
+    const index = await this._get_index()
+    let ids = Object.keys(index)
+
+    if (category) ids = ids.filter(id => index[id].category === category)
+    if (state)    ids = ids.filter(id => index[id].state    === state)
+
+    ids = ids.slice(0, Math.min(limit || 20, 100))
+
+    const markets = []
+    for (const id of ids) {
+      const m = await this.get_market(id)
+      if (m) markets.push(this._summary(m))
     }
+    return markets.sort((a, b) => b.created_at - a.created_at)
+  }
+
+  async get_market(market_id) {
+    const raw = await this.db.get(`market:${market_id}`)
+    return raw ? JSON.parse(raw) : null
+  }
+
+  async my_stakes({ address }) {
+    const index = await this._get_index()
+    const results = []
+    for (const id of Object.keys(index)) {
+      const m = await this.get_market(id)
+      if (!m) continue
+      const yes_stake = m.yes_stakers[address] || 0
+      const no_stake  = m.no_stakers[address]  || 0
+      if (yes_stake > 0 || no_stake > 0) {
+        results.push({ ...this._summary(m), your_yes: yes_stake, your_no: no_stake })
+      }
+    }
+    return results
+  }
+
+  // ── INTERNAL ───────────────────────────────────────────────────────────────
+
+  async _require_market(id) {
+    const m = await this.get_market(id)
+    if (!m) throw new Error(`market not found: ${id}`)
+    return m
+  }
+
+  _summary(m) {
+    return {
+      id:             m.id,
+      question:       m.question,
+      category:       m.category,
+      state:          m.state,
+      outcome:        m.outcome,
+      yes_pool:       m.yes_pool,
+      no_pool:        m.no_pool,
+      total_pool:     m.yes_pool + m.no_pool,
+      closes_at:      m.closes_at,
+      resolve_at:     m.resolve_at,
+      oracle_address: m.oracle_address,
+      created_at:     m.created_at,
+    }
+  }
+
+  async _get_index() {
+    const raw = await this.db.get('index:markets')
+    return raw ? JSON.parse(raw) : {}
+  }
+
+  async _add_to_index(id, state, category) {
+    const idx = await this._get_index()
+    idx[id] = { state, category }
+    await this.db.put('index:markets', JSON.stringify(idx))
+  }
+
+  async _update_index(id, state) {
+    const idx = await this._get_index()
+    if (idx[id]) { idx[id].state = state; await this.db.put('index:markets', JSON.stringify(idx)) }
+  }
 }
-
-export default SampleContract;
