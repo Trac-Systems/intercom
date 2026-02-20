@@ -1,81 +1,214 @@
-# Intercom
+# PeerPump
 
-This repository is a reference implementation of the **Intercom** stack on Trac Network for an **internet of agents**.
+PeerPump is a decentralized, reputation-weighted meme coin discovery network built on a peer-to-peer blockchain infrastructure.
 
-At its core, Intercom is a **peer-to-peer (P2P) network**: peers discover each other and communicate directly (with optional relaying) over the Trac/Holepunch stack (Hyperswarm/HyperDHT + Protomux). There is no central server required for sidechannel messaging.
+Instead of influencers controlling market momentum, anonymous users ("Anons") collectively determine token visibility through verifiable on-chain reputation scoring.
 
-Features:
-- **Sidechannels**: fast, ephemeral P2P messaging (with optional policy: welcome, owner-only write, invites, PoW, relaying).
-- **SC-Bridge**: authenticated local WebSocket control surface for agents/tools (no TTY required).
-- **Contract + protocol**: deterministic replicated state and optional chat (subnet plane).
-- **MSB client**: optional value-settled transactions via the validator network.
 
-Additional references: https://www.moltbook.com/post/9ddd5a47-4e8d-4f01-9908-774669a11c21 and moltbook m/intercom
+# 🚀 Vision
 
-For full, agent‑oriented instructions and operational guidance, **start with `SKILL.md`**.  
-It includes setup steps, required runtime, first‑run decisions, and operational notes.
+Crypto discovery today is dominated by large influencers, paid promotions, and opaque signal groups. PeerPump introduces:
 
-## Awesome Intercom
+Reputation-weighted signal broadcasting
 
-For a curated list of agentic Intercom apps check out: https://github.com/Trac-Systems/awesome-intercom
+Accountability for token endorsements
 
-## What this repo is for
-- A working, pinned example to bootstrap agents and peers onto Trac Network.
-- A template that can be trimmed down for sidechannel‑only usage or extended for full contract‑based apps.
+On-chain storage of posts and interactions
 
-## How to use
-Use the **Pear runtime only** (never native node).  
-Follow the steps in `SKILL.md` to install dependencies, run the admin peer, and join peers correctly.
+Algorithmic visibility based on credibility
 
-## Architecture (ASCII map)
-Intercom is a single long-running Pear process that participates in three distinct networking "planes":
-- **Subnet plane**: deterministic state replication (Autobase/Hyperbee over Hyperswarm/Protomux).
-- **Sidechannel plane**: fast ephemeral messaging (Hyperswarm/Protomux) with optional policy gates (welcome, owner-only write, invites).
-- **MSB plane**: optional value-settled transactions (Peer -> MSB client -> validator network).
 
-```text
-                          Pear runtime (mandatory)
-                pear run . --peer-store-name <peer> --msb-store-name <msb>
-                                        |
-                                        v
-  +-------------------------------------------------------------------------+
-  |                            Intercom peer process                         |
-  |                                                                         |
-  |  Local state:                                                          |
-  |  - stores/<peer-store-name>/...   (peer identity, subnet state, etc)    |
-  |  - stores/<msb-store-name>/...    (MSB wallet/client state)             |
-  |                                                                         |
-  |  Networking planes:                                                     |
-  |                                                                         |
-  |  [1] Subnet plane (replication)                                         |
-  |      --subnet-channel <name>                                            |
-  |      --subnet-bootstrap <admin-writer-key-hex>  (joiners only)          |
-  |                                                                         |
-  |  [2] Sidechannel plane (ephemeral messaging)                             |
-  |      entry: 0000intercom   (name-only, open to all)                     |
-  |      extras: --sidechannels chan1,chan2                                 |
-  |      policy (per channel): welcome / owner-only write / invites         |
-  |      relay: optional peers forward plaintext payloads to others          |
-  |                                                                         |
-  |  [3] MSB plane (transactions / settlement)                               |
-  |      Peer -> MsbClient -> MSB validator network                          |
-  |                                                                         |
-  |  Agent control surface (preferred):                                     |
-  |  SC-Bridge (WebSocket, auth required)                                   |
-  |    JSON: auth, send, join, open, stats, info, ...                       |
-  +------------------------------+------------------------------+-----------+
-                                 |                              |
-                                 | SC-Bridge (ws://host:port)   | P2P (Hyperswarm)
-                                 v                              v
-                       +-----------------+            +-----------------------+
-                       | Agent / tooling |            | Other peers (P2P)     |
-                       | (no TTY needed) |<---------->| subnet + sidechannels |
-                       +-----------------+            +-----------------------+
+The result is a transparent, community-driven token discovery layer.
 
-  Optional for local testing:
-  - --dht-bootstrap "<host:port,host:port>" overrides the peer's HyperDHT bootstraps
-    (all peers that should discover each other must use the same list).
-```
+
+# 🧠 Core Concept
+
+On PeerPump:
+
+Users are called Anons
+
+Each Anon starts with a rating of 20
+
+Users can only post Contract Addresses (CAs)
+
+Tokens are automatically analyzed for:
+
+Liquidity lock status
+
+Developer rating
+
+Basic risk indicators
+
+
+
+Token visibility is determined by:
+
+Number of endorsements (retweets)
+
+Combined ratings of endorsing Anons
+
+Engagement (likes/dislikes)
+
+Token performance over time
+
+
+Reputation increases or decreases depending on outcomes.
+
+
+# 📈 Reputation Mechanics
+
+When a token performs well:
+
+If an Anon endorses at time T and the token does 3x shortly after → rating increases
+
+If the token survives the full 7-day lifecycle → additional reward
+
+Poster receives higher reward than endorsers
+
+
+When a token performs poorly:
+
+Poster loses a larger percentage of rating
+
+Endorsers lose a smaller percentage
+
+Downvoters may gain minor credibility
+
+
+This enforces due diligence before signal broadcasting.
+
 
 ---
-If you plan to build your own app, study the existing contract/protocol and remove example logic as needed (see `SKILL.md`).
+
+🏗 Architecture
+
+PeerPump follows a decentralized architecture:
+
+Frontend (React + TypeScript)
+        ↓
+Intercom / Trac P2P Layer
+        ↓
+Blockchain Storage
+        ↓
+Smart Contract Reputation Engine
+
+All data is stored and retrieved from the blockchain or P2P network. No centralized database exists.
+
+
+---
+
+📂 Project Structure
+
+peerpump/
+├─ public/
+├─ src/
+│   ├─ components/
+│   ├─ pages/
+│   ├─ network/
+│   ├─ blockchain/
+│   ├─ App.tsx
+│   ├─ index.tsx
+│   └─ styles.css
+├─ package.json
+├─ tsconfig.json
+└─ README.md
+
+
+---
+
+🖥 Features
+
+CA-only posting
+
+Liquidity lock verification
+
+Developer reputation scoring
+
+Endorse (retweet) mechanism
+
+Like / Dislike voting
+
+Reputation-weighted feed ranking
+
+Lifecycle-based scoring system
+
+Profile page with rating tracking
+
+P2P broadcast layer (Intercom-compatible)
+
+
+
+---
+
+🔧 Installation
+
+1. Clone the repository:
+
+
+
+git clone <repo-url>
+cd peerpump
+
+2. Install dependencies:
+
+
+
+npm install
+
+3. Run the app:
+
+
+
+npm start
+
+
+---
+
+🛠 Future Improvements
+
+Wallet authentication (MetaMask / WalletConnect)
+
+Real smart contract deployment
+
+On-chain analytics dashboard
+
+Whale wallet monitoring
+
+AI-based signal quality scoring
+
+Cross-chain support (ETH, SOL, BSC)
+
+
+
+---
+
+⚠ Disclaimer
+
+PeerPump does not provide financial advice. All token signals are community-generated. Always conduct independent research before investing.
+
+
+---
+
+🤝 Contributing
+
+Pull requests are welcome. For major changes, open an issue first to discuss improvements.
+
+
+---
+
+📜 License
+
+MIT License
+
+
+---
+
+If you’d like, I can now generate:
+
+A production-grade smart contract for the reputation engine
+
+A tokenomics model for PeerPump itself
+
+A whitepaper-style technical breakdown
+
+Or a pitch deck version for investors
