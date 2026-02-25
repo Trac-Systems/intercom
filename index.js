@@ -502,11 +502,22 @@ const sidechannel = new Sidechannel(peer, {
   ownerWriteChannels: sidechannelOwnerWriteChannels || undefined,
   ownerKeys: sidechannelOwnerMap.size > 0 ? sidechannelOwnerMap : undefined,
   welcomeByChannel: sidechannelWelcomeMap.size > 0 ? sidechannelWelcomeMap : undefined,
-  onMessage: scBridgeEnabled
-    ? (channel, payload, connection) => scBridge.handleSidechannelMessage(channel, payload, connection)
-    : sidechannelQuiet
-      ? () => {}
-      : null,
+  onMessage: (channel, payload, connection) => {
+    const msg = payload?.message;
+    if (msg && msg.type === 'uptime_ping') {
+      const peerId = payload?.from ?? 'unknown';
+      const ts = msg.timestamp ?? '';
+      console.log(`🟢 Received heartbeat from [${peerId}]: ${ts}`);
+      return;
+    }
+    if (scBridgeEnabled && scBridge) {
+      scBridge.handleSidechannelMessage(channel, payload, connection);
+    } else if (!sidechannelQuiet) {
+      const from = payload?.from ?? 'unknown';
+      const out = payload?.message ?? payload;
+      console.log(`[sidechannel:${channel}] ${from}:`, out);
+    }
+  },
 });
 peer.sidechannel = sidechannel;
 
@@ -524,6 +535,13 @@ sidechannel
   .start()
   .then(() => {
     console.log('Sidechannel: ready');
+    setInterval(() => {
+      sidechannel.broadcast(sidechannelEntry, {
+        type: 'uptime_ping',
+        status: 'Agent is online',
+        timestamp: Date.now(),
+      });
+    }, 5000);
   })
   .catch((err) => {
     console.error('Sidechannel failed to start:', err?.message ?? err);

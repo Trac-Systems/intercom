@@ -1,3 +1,19 @@
+# Agentic Uptime Pinger
+
+A lightweight, decentralized node monitoring tool built on the Intercom protocol. 
+
+## How it Works
+Instead of relying on centralized servers, this app strips away the manual CLI and automatically joins a dedicated `uptime_monitor` sidechannel. It uses a `setInterval` loop to broadcast a continuous JSON heartbeat to connected peers, allowing the network to verify the real-time operational status of agents.
+
+## How to Run
+1. Run the app: `pear run . --dht-bootstrap "127.0.0.1:49737"`
+2. The agent will automatically join the sidechannel and begin broadcasting its heartbeat every 5 seconds. Received pings from other peers are automatically logged to the console.
+
+---
+**Submission Details:**
+- **Developer:** Cmg
+- **Trac Wallet Address:** trac1tva6fsak4a29flv9k0mha00u4fz67fpyyklmpanpaf8az7yrps6qtckav8
+
 # Intercom
 
 This repository is a reference implementation of the **Intercom** stack on Trac Network for an **internet of agents**.
@@ -75,3 +91,5 @@ Intercom is a single long-running Pear process that participates in three distin
 
 ---
 If you plan to build your own app, study the existing contract/protocol and remove example logic as needed (see `SKILL.md`).
+
+
