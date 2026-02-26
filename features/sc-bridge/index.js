@@ -55,6 +55,22 @@ const matchesFilter = (filter, text) => {
   return filter.some((group) => group.every((word) => haystack.includes(word)));
 };
 
+const parseMembers = (value) => {
+  const values = Array.isArray(value)
+    ? value
+    : typeof value === 'string'
+      ? value.split(',')
+      : [];
+  return values
+    .map((entry) => String(entry || '').trim().toLowerCase())
+    .filter((entry) => entry.length > 0);
+};
+
+const parseBoolFlag = (value, fallback = false) => {
+  if (value === undefined || value === null || value === '') return fallback;
+  return ['1', 'true', 'yes', 'on'].includes(String(value).trim().toLowerCase());
+};
+
 class ScBridge extends Feature {
   constructor(peer, config = {}) {
     super(peer, config);
@@ -367,6 +383,267 @@ class ScBridge extends Feature {
           return;
         }
         reply({ type: 'open_requested', channel, via: via || null });
+        return;
+      }
+      case 'expense_add': {
+        const app = this.peer?.expenseSplit;
+        if (!app) {
+          sendError('Expense split app not initialized.');
+          return;
+        }
+        const channel = String(message.channel || app.defaultChannel || '').trim();
+        const payer = String(message.payer || '').trim();
+        const amount = message.amount;
+        const split = parseMembers(message.split);
+        const note = message.note;
+        if (!channel || !payer || amount === undefined || split.length === 0) {
+          sendError('Missing fields. Required: channel, payer, amount, split.');
+          return;
+        }
+        const result = app.addExpense({ channel, payer, amount, split, note });
+        if (!result.ok) {
+          sendError(result.error || 'Failed to add expense.');
+          return;
+        }
+        reply({
+          type: 'expense_added',
+          channel: result.channel,
+          event: result.event,
+          broadcasted: result.broadcasted === true,
+        });
+        return;
+      }
+      case 'expense_list': {
+        const app = this.peer?.expenseSplit;
+        if (!app) {
+          sendError('Expense split app not initialized.');
+          return;
+        }
+        const channel = String(message.channel || app.defaultChannel || '').trim();
+        if (!channel) {
+          sendError('Missing channel.');
+          return;
+        }
+        const events = app.list(channel);
+        reply({
+          type: 'expense_list',
+          channel,
+          count: events.length,
+          events,
+        });
+        return;
+      }
+      case 'expense_balance': {
+        const app = this.peer?.expenseSplit;
+        if (!app) {
+          sendError('Expense split app not initialized.');
+          return;
+        }
+        const channel = String(message.channel || app.defaultChannel || '').trim();
+        if (!channel) {
+          sendError('Missing channel.');
+          return;
+        }
+        const summary = app.summary(channel);
+        reply({
+          type: 'expense_balance',
+          summary,
+        });
+        return;
+      }
+      case 'expense_clear': {
+        const app = this.peer?.expenseSplit;
+        if (!app) {
+          sendError('Expense split app not initialized.');
+          return;
+        }
+        const channel = String(message.channel || app.defaultChannel || '').trim();
+        if (!channel) {
+          sendError('Missing channel.');
+          return;
+        }
+        const result = app.clearChannel(channel);
+        reply({
+          type: 'expense_cleared',
+          channel: result.channel,
+          ok: result.ok === true,
+        });
+        return;
+      }
+      case 'expense_export': {
+        const app = this.peer?.expenseSplit;
+        if (!app) {
+          sendError('Expense split app not initialized.');
+          return;
+        }
+        const channel = String(message.channel || app.defaultChannel || '').trim();
+        if (!channel) {
+          sendError('Missing channel.');
+          return;
+        }
+        const format = String(message.format || 'text').trim().toLowerCase();
+        const summary = app.summary(channel);
+        if (format === 'csv') {
+          const lines = ['from,to,amount'];
+          for (const row of summary.settlements || []) {
+            lines.push(`${row.from},${row.to},${app.formatAmount(row.amountCents)}`);
+          }
+          reply({
+            type: 'expense_export',
+            channel: summary.channel,
+            format: 'csv',
+            data: lines.join('\n'),
+            summary,
+          });
+          return;
+        }
+        if (format === 'json') {
+          reply({
+            type: 'expense_export',
+            channel: summary.channel,
+            format: 'json',
+            data: JSON.stringify(summary, null, 2),
+            summary,
+          });
+          return;
+        }
+        const lines = [];
+        lines.push('InterSplit Settlement Export');
+        lines.push(`channel: ${summary.channel}`);
+        lines.push(`events: ${summary.eventCount}`);
+        lines.push(`total: ${app.formatAmount(summary.totalCents)}`);
+        lines.push('settlements:');
+        if (!summary.settlements || summary.settlements.length === 0) {
+          lines.push('- none');
+        } else {
+          for (const row of summary.settlements) {
+            lines.push(`- ${row.from} -> ${row.to}: ${app.formatAmount(row.amountCents)}`);
+          }
+        }
+        reply({
+          type: 'expense_export',
+          channel: summary.channel,
+          format: 'text',
+          data: lines.join('\n'),
+          summary,
+        });
+        return;
+      }
+      case 'expense_persist': {
+        const app = this.peer?.expenseSplit;
+        const protocol = this.peer?.protocol?.instance;
+        if (!app) {
+          sendError('Expense split app not initialized.');
+          return;
+        }
+        if (!protocol || typeof protocol.tx !== 'function' || typeof protocol.safeJsonStringify !== 'function') {
+          sendError('Protocol tx interface not available.');
+          return;
+        }
+        if (this.peer?.base?.writable === false) {
+          sendError('Peer is not writable.');
+          return;
+        }
+        const channel = String(message.channel || app.defaultChannel || '').trim().toLowerCase();
+        if (!channel) {
+          sendError('Missing channel.');
+          return;
+        }
+        const snapshot = app.exportRoom(channel);
+        const command = protocol.safeJsonStringify({
+          op: 'expense_upsert_room',
+          channel,
+          snapshot,
+        });
+        if (command === null) {
+          sendError('Failed to serialize snapshot for tx payload.');
+          return;
+        }
+        const sim = parseBoolFlag(message.sim, false);
+        protocol
+          .tx({ command }, sim)
+          .then((txResult) => {
+            const err = typeof protocol.getError === 'function' ? protocol.getError(txResult) : null;
+            if (err) {
+              sendError(`Persist failed: ${err.message}`);
+              return;
+            }
+            reply({
+              type: 'expense_persisted',
+              channel,
+              sim,
+              tx: txResult?.txo?.tx || null,
+              result: txResult || null,
+            });
+          })
+          .catch((err) => {
+            sendError(`Persist failed: ${err?.message ?? String(err)}`);
+          });
+        return;
+      }
+      case 'expense_restore': {
+        const app = this.peer?.expenseSplit;
+        const protocol = this.peer?.protocol?.instance;
+        if (!app) {
+          sendError('Expense split app not initialized.');
+          return;
+        }
+        if (!protocol || (typeof protocol.getSigned !== 'function' && typeof protocol.get !== 'function')) {
+          sendError('Protocol state reader not available.');
+          return;
+        }
+        const channel = String(message.channel || app.defaultChannel || '').trim().toLowerCase();
+        if (!channel) {
+          sendError('Missing channel.');
+          return;
+        }
+        const confirmed = parseBoolFlag(message.confirmed, true);
+        const replace = parseBoolFlag(message.replace, false);
+        const key = `expense/room/${channel}`;
+        const readPromise = confirmed ? protocol.getSigned(key) : protocol.get(key);
+        Promise.resolve(readPromise)
+          .then((value) => {
+            if (!value || value.deleted === true || value.snapshot === null) {
+              const localSnapshot = typeof app.getLocalSnapshot === 'function' ? app.getLocalSnapshot(channel) : null;
+              if (!localSnapshot) {
+                sendError('No persisted snapshot found.');
+                return;
+              }
+              const localImported = app.importRoom(localSnapshot, { replace });
+              if (!localImported.ok) {
+                sendError(localImported.error || 'Failed to import local snapshot.');
+                return;
+              }
+              reply({
+                type: 'expense_restored',
+                channel: localImported.channel,
+                added: localImported.added,
+                total: localImported.total,
+                confirmed,
+                replace,
+                source: 'local',
+              });
+              return;
+            }
+            const snapshot = value?.snapshot && typeof value.snapshot === 'object' ? value.snapshot : value;
+            const imported = app.importRoom(snapshot, { replace });
+            if (!imported.ok) {
+              sendError(imported.error || 'Failed to import snapshot.');
+              return;
+            }
+            reply({
+              type: 'expense_restored',
+              channel: imported.channel,
+              added: imported.added,
+              total: imported.total,
+              confirmed,
+              replace,
+              source: 'contract',
+            });
+          })
+          .catch((err) => {
+            sendError(`Restore failed: ${err?.message ?? String(err)}`);
+          });
         return;
       }
       case 'stats': {
