@@ -18,7 +18,8 @@
     "trac-msb": "git+https://github.com/Trac-Systems/main_settlement_bus.git#5088921",
     "trac-peer": "git+https://github.com/Trac-Systems/trac-peer.git#d108f52",
     "trac-wallet": "1.0.1",
-    "util": "npm:bare-node-util"
+    "util": "npm:bare-node-util",
+    "ws": "^8.19.0"
   },
   "overrides": {
     "trac-wallet": "1.0.1"

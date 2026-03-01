@@ -1,0 +1,90 @@
+# Fractional Ownership for Trading Cards using Intercom
+
+What if you could own a fraction of a rare trading card—for as little as $10?
+
+This project explores how real-world collectibles like Pokémon, sports cards, or other high-value trading cards can become shared, peer-to-peer owned assets. Instead of relying on centralized platforms, ownership, communication, and trading happen directly between participants using Intercom’s decentralized infrastructure.
+
+Each card becomes its own digital coordination space where holders can:
+
+* own fractions of the asset
+* trade shares directly with others
+* coordinate decisions (e.g. sell, hold, auction)
+* communicate peer-to-peer without intermediaries
+
+This lowers the barrier to entry for collectors and investors, and enables new forms of shared ownership around real-world assets.
+
+---
+
+# Why Intercom
+
+Intercom provides a peer-to-peer networking stack designed for an “internet of agents,” enabling secure communication, shared state, and optional value transfer without centralized servers.
+
+By combining Intercom with fractional ownership logic, each trading card becomes:
+
+* a **peer-to-peer asset channel**
+* a **replicated ownership state** managed by contracts
+* a **coordination layer** for holders
+* a **marketplace without a platform**
+
+This means the asset itself becomes the platform.
+
+---
+
+# Concept Overview
+
+Each trading card is represented as:
+
+**1. Asset Channel (Sidechannel)**
+A dedicated Intercom sidechannel for real-time communication and coordination between holders.
+
+**2. Ownership Contract (Subnet plane)**
+A deterministic replicated state storing:
+
+* total shares
+* ownership distribution
+* transfer history
+
+**3. Peer-to-Peer Trading**
+Participants can transfer ownership directly, without centralized custody.
+
+**4. Optional Settlement Layer**
+Value transfer can be integrated using crypto settlement if required.
+
+---
+
+# Goals of this Repository
+
+This fork serves as an experimental foundation to explore:
+
+* Fractional ownership of real-world collectibles
+* Peer-to-peer asset coordination
+* Decentralized asset communities
+* Agent-native ownership and trading models
+
+---
+
+# Vision
+
+Fractional ownership will transform how real-world assets are owned and traded.
+
+Trading cards are the ideal starting point:
+
+* highly liquid
+* globally recognized
+* culturally significant
+* crypto-native audience
+
+This project is a step toward a future where any real-world asset can exist as a peer-to-peer owned, digitally coordinated entity.
+
+---
+
+# Status
+
+Experimental. Early exploration and prototype phase.
+
+---
+
+# Based on
+
+Intercom by Trac Systems
+https://github.com/Trac-Systems/intercom
