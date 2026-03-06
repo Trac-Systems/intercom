@@ -71,7 +71,20 @@ Intercom is a single long-running Pear process that participates in three distin
   Optional for local testing:
   - --dht-bootstrap "<host:port,host:port>" overrides the peer's HyperDHT bootstraps
     (all peers that should discover each other must use the same list).
+  - Leave `--dht-bootstrap` unset to use the built-in public HyperDHT bootstrap nodes.
 ```
+
+## Sidechannel runtime knobs
+- Rate limiting is inbound and per connection. Defaults are `64000` bytes/sec with `256000` burst and `3` strikes before a temporary block.
+- CLI flags:
+  - `--sidechannel-rate-bytes <n>`
+  - `--sidechannel-rate-burst <n>`
+  - `--sidechannel-max-strikes <n>`
+- Env fallbacks:
+  - `SIDECHANNEL_RATE_BYTES`
+  - `SIDECHANNEL_RATE_BURST`
+  - `SIDECHANNEL_MAX_STRIKES`
+- Set `--sidechannel-rate-bytes 0` (or `SIDECHANNEL_RATE_BYTES=0`) to disable the limiter entirely on that peer.
 
 ---
 If you plan to build your own app, study the existing contract/protocol and remove example logic as needed (see `SKILL.md`).

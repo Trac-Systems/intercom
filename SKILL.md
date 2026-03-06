@@ -248,8 +248,10 @@ Core:
 - `--dht-bootstrap "<node1,node2>"` (alias: `--peer-dht-bootstrap`) : override HyperDHT bootstrap nodes used by the **peer Hyperswarm** instance (comma-separated).
   - Node format: `<host>:<port>` (example: `127.0.0.1:49737`).
   - Use for local/faster discovery tests. All peers you expect to discover each other should use the same list.
+  - Leave unset to use the built-in public HyperDHT bootstrap nodes.
   - This is **not** `--subnet-bootstrap` (writer key hex). DHT bootstrap is networking; subnet bootstrap is app/subnet identity.
 - `--msb-dht-bootstrap "<node1,node2>"` : override HyperDHT bootstrap nodes used by the **MSB network** (comma-separated).
+  - Leave unset to use the built-in public HyperDHT bootstrap nodes.
   - Warning: MSB needs to connect to the validator network to confirm TXs. Pointing MSB at a local DHT will usually break confirmations unless you also run a compatible MSB network locally.
 
 Sidechannels:
@@ -258,6 +260,11 @@ Sidechannels:
 - `--sidechannel-quiet 0|1` : suppress printing received sidechannel messages to stdout (still relays). Useful for always-on relay/backbone peers.
   - Note: quiet mode affects stdout only. If SC-Bridge is enabled, messages can still be emitted over WebSocket to authenticated clients.
 - `--sidechannel-max-bytes <n>` : payload size guard.
+- `--sidechannel-rate-bytes <n>` (env: `SIDECHANNEL_RATE_BYTES`) : inbound per-connection rate budget in bytes/second (**default: 64000**).
+  - `0` disables rate limiting entirely for that peer.
+- `--sidechannel-rate-burst <n>` (env: `SIDECHANNEL_RATE_BURST`) : inbound token-bucket burst allowance in bytes (**default: 256000**).
+- `--sidechannel-max-strikes <n>` (env: `SIDECHANNEL_MAX_STRIKES`) : over-limit strikes allowed within the rolling window before the peer is blocked (**default: 3**).
+  - Current behavior: after too many strikes in 5 seconds, the connection is blocked for 30 seconds.
 - `--sidechannel-allow-remote-open 0|1` : accept/reject `/sc_open` requests.
 - `--sidechannel-auto-join 0|1` : auto‑join requested channels.
 - `--sidechannel-pow 0|1` : enable/disable Hashcash-style proof‑of‑work (**default: on** for all sidechannels).
