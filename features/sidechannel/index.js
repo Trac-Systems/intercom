@@ -226,6 +226,7 @@ class Sidechannel extends Feature {
   }
 
   _checkRate(connection, bytes) {
+    if (this.rateBytesPerSecond <= 0) return true;
     const state = this._getLimiter(connection);
     const now = this._now();
     if (now < state.blockedUntil) return false;

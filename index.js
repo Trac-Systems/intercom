@@ -161,6 +161,27 @@ const sidechannelPowChannels = sidechannelPowChannelsRaw
       .map((value) => value.trim())
       .filter((value) => value.length > 0)
   : null;
+const sidechannelRateBytesRaw =
+  (flags['sidechannel-rate-bytes'] && String(flags['sidechannel-rate-bytes'])) ||
+  env.SIDECHANNEL_RATE_BYTES ||
+  '';
+const sidechannelRateBytes = sidechannelRateBytesRaw
+  ? Number.parseInt(sidechannelRateBytesRaw, 10)
+  : undefined;
+const sidechannelRateBurstRaw =
+  (flags['sidechannel-rate-burst'] && String(flags['sidechannel-rate-burst'])) ||
+  env.SIDECHANNEL_RATE_BURST ||
+  '';
+const sidechannelRateBurst = sidechannelRateBurstRaw
+  ? Number.parseInt(sidechannelRateBurstRaw, 10)
+  : undefined;
+const sidechannelMaxStrikesRaw =
+  (flags['sidechannel-max-strikes'] && String(flags['sidechannel-max-strikes'])) ||
+  env.SIDECHANNEL_MAX_STRIKES ||
+  '';
+const sidechannelMaxStrikes = sidechannelMaxStrikesRaw
+  ? Number.parseInt(sidechannelMaxStrikesRaw, 10)
+  : undefined;
 const sidechannelInviteRequiredRaw =
   (flags['sidechannel-invite-required'] && String(flags['sidechannel-invite-required'])) ||
   env.SIDECHANNEL_INVITE_REQUIRED ||
@@ -492,6 +513,9 @@ const sidechannel = new Sidechannel(peer, {
   powDifficulty: Number.isInteger(sidechannelPowDifficulty) ? sidechannelPowDifficulty : undefined,
   powRequireEntry: sidechannelPowRequireEntry,
   powRequiredChannels: sidechannelPowChannels || undefined,
+  rateBytesPerSecond: Number.isSafeInteger(sidechannelRateBytes) ? sidechannelRateBytes : undefined,
+  rateBurstBytes: Number.isSafeInteger(sidechannelRateBurst) ? sidechannelRateBurst : undefined,
+  maxStrikes: Number.isSafeInteger(sidechannelMaxStrikes) ? sidechannelMaxStrikes : undefined,
   inviteRequired: sidechannelInviteRequired,
   inviteRequiredChannels: sidechannelInviteChannels || undefined,
   inviteRequiredPrefixes: sidechannelInvitePrefixes || undefined,
