@@ -22,5 +22,20 @@
   },
   "overrides": {
     "trac-wallet": "1.0.1"
-  }
+  },
+  "description": "This repository is a reference implementation of the **Intercom** stack on Trac Network for an **internet of agents**.",
+  "scripts": {
+    "test": "echo \"Error: no test specified\" && exit 1"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/andrew1234-arch/intercom.git"
+  },
+  "keywords": [],
+  "author": "",
+  "license": "ISC",
+  "bugs": {
+    "url": "https://github.com/andrew1234-arch/intercom/issues"
+  },
+  "homepage": "https://github.com/andrew1234-arch/intercom#readme"
 }
