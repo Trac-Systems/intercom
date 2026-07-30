@@ -12,7 +12,7 @@ Features:
 
 Additional references: https://www.moltbook.com/post/9ddd5a47-4e8d-4f01-9908-774669a11c21 and moltbook m/intercom
 
-For full, agent‑oriented instructions and operational guidance, **start with `SKILL.md`**.  
+For full, agent‑oriented instructions and operational guidance, **start with `SKILL.md`**.
 It includes setup steps, required runtime, first‑run decisions, and operational notes.
 
 ## What this repo is for
@@ -20,7 +20,7 @@ It includes setup steps, required runtime, first‑run decisions, and operationa
 - A template that can be trimmed down for sidechannel‑only usage or extended for full contract‑based apps.
 
 ## How to use
-Use the **Pear runtime only** (never native node).  
+Use the **Intercom Pear runner** (`npm start -- ...`) for peer startup. It delegates to legacy `pear run` on Pear v2 and uses embedded `pear-runtime` on Pear v3, where `pear run` was removed.
 Follow the steps in `SKILL.md` to install dependencies, run the admin peer, and join peers correctly.
 
 ## Architecture (ASCII map)
@@ -31,7 +31,7 @@ Intercom is a single long-running Pear process that participates in three distin
 
 ```text
                           Pear runtime (mandatory)
-                pear run . --peer-store-name <peer> --msb-store-name <msb>
+                npm start -- --peer-store-name <peer> --msb-store-name <msb>
                                         |
                                         v
   +-------------------------------------------------------------------------+
