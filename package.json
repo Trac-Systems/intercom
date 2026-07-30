@@ -21,9 +21,6 @@
     "trac-wallet": "1.0.1",
     "util": "npm:bare-node-util"
   },
-  "overrides": {
-    "trac-wallet": "1.0.1"
-  },
   "scripts": {
     "start": "node scripts/pear-runner.mjs",
     "peer": "node scripts/pear-runner.mjs",
