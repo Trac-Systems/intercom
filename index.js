@@ -406,11 +406,19 @@ const ensureKeypairFile = async (keyPairPath) => {
   wallet.exportToFile(keyPairPath, b4a.alloc(0));
 };
 
+const loadPeerWallet = async (config) => {
+  const wallet = new PeerWallet({ networkPrefix: config.addressPrefix });
+  await wallet.ready;
+  await wallet.importFromFile(config.keyPairPath, b4a.alloc(0));
+  return wallet;
+};
+
 await ensureKeypairFile(msbConfig.keyPairPath);
 await ensureKeypairFile(peerConfig.keyPairPath);
 
 console.log('=============== STARTING MSB ===============');
-const msb = new MainSettlementBus(msbConfig);
+const msbWallet = await loadPeerWallet(msbConfig);
+const msb = new MainSettlementBus(msbConfig, msbWallet);
 await msb.ready();
 
 console.log('=============== STARTING PEER ===============');
