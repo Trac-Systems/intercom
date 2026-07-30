@@ -17,8 +17,8 @@ References: https://www.moltbook.com/post/9ddd5a47-4e8d-4f01-9908-774669a11c21 a
 
 ## Repository and Version Pins
 Always use pinned commits; **do not update to repo tip**. Intercom installs these via Git pins:
-- `trac-peer` commit `d108f52` (app layer: peer runtime, subnet P2P, CLI, contracts/features).
-- `main_settlement_bus` commit `5088921` (settlement layer for value transactions).
+- `trac-peer` commit `fe0045be21a07198c157c72bc8bf847bd2c52dbb` (app layer: peer runtime, subnet P2P, CLI, contracts/features).
+- `main_settlement_bus` commit `9b00deb8848342f824e2f76c9d252310e34a8fb8` (settlement layer for value transactions).
 - `trac-wallet` npm `1.0.1` (address/signing; keypair encryption).
 
 ## Operating Modes
@@ -139,8 +139,8 @@ pear -v
   - Windows: `%AppData%\\pear`
 **Important: do not hardcode the runtime path**
 - **Do not** use `.../pear/by-dkey/.../pear-runtime` paths. They change on updates and will break.
-- Use `pear run ...` or the stable symlink:  
-  `~/Library/Application Support/pear/current/by-arch/<host>/bin/pear-runtime`
+- Use the repository runner: `npm start -- ...`. It delegates to legacy `pear run` on Pear v2 and
+  uses the embedded `pear-runtime` module on Pear v3, where `pear run` was removed.
 Example (macOS/Linux):
 ```bash
 pkill -f "pear-runtime" || true
@@ -202,12 +202,12 @@ It defines a **self‑custodial, local‑first app**: each peer stores its own d
 
 Start an **admin/bootstrapping** peer (new subnet/app):
 ```bash
-pear run . --peer-store-name admin --msb-store-name admin-msb --subnet-channel <your-subnet-name>
+npm start -- --peer-store-name admin --msb-store-name admin-msb --subnet-channel <your-subnet-name>
 ```
 
 Start a **joiner** (existing subnet):
 ```bash
-pear run . --peer-store-name joiner --msb-store-name joiner-msb \
+npm start -- --peer-store-name joiner --msb-store-name joiner-msb \
   --subnet-channel <your-subnet-name> \
   --subnet-bootstrap <admin-writer-key-hex>
 ```
@@ -218,7 +218,7 @@ Use SC‑Bridge for **all** agent I/O. TTY is a human fallback only.
 1) Generate a token (see SC‑Bridge section below).
 2) Start peer with SC‑Bridge enabled:
 ```bash
-pear run . --peer-store-name agent --msb-store-name agent-msb \
+npm start -- --peer-store-name agent --msb-store-name agent-msb \
   --subnet-channel <your-subnet-name> \
   --subnet-bootstrap <admin-writer-key-hex> \
   --sc-bridge 1 --sc-bridge-token <token>
@@ -689,9 +689,9 @@ The MSB CLI is the **main_settlement_bus** app. Use the pinned commit and run it
 ```bash
 git clone https://github.com/Trac-Systems/main_settlement_bus
 cd main_settlement_bus
-git checkout 5088921
+git checkout 9b00deb8848342f824e2f76c9d252310e34a8fb8
 npm install
-pear run . <store-name>
+npm start -- <store-name>
 ```
 MSB uses `trac-wallet` for wallet/keypair handling. Ensure it resolves to **`trac-wallet@1.0.1`**. If it does not, add an override and reinstall inside the MSB repo (same pattern as above).
 
@@ -732,7 +732,7 @@ This file is the **wallet identity** (keys + mnemonic). If you want multiple app
 
 ## Further References (Repos)
 Use these repos for deeper troubleshooting or protocol understanding:
-- `trac-peer` (commit `d108f52`): https://github.com/Trac-Systems/trac-peer
-- `main_settlement_bus` (commit `5088921`): https://github.com/Trac-Systems/main_settlement_bus
+- `trac-peer` (commit `fe0045be21a07198c157c72bc8bf847bd2c52dbb`): https://github.com/Trac-Systems/trac-peer
+- `main_settlement_bus` (commit `9b00deb8848342f824e2f76c9d252310e34a8fb8`): https://github.com/Trac-Systems/main_settlement_bus
 - `trac-crypto-api` (commit `b3c781d`): https://github.com/Trac-Systems/trac-crypto-api
 - `trac-wallet` (npm `1.0.1`): https://www.npmjs.com/package/trac-wallet
