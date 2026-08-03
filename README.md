@@ -22,6 +22,7 @@ It includes setup steps, required runtime, first‑run decisions, and operationa
 ## How to use
 Use the **Intercom Pear runner** (`npm start -- ...`) for peer startup. It delegates to legacy `pear run` on Pear v2 and uses embedded `pear-runtime` on Pear v3, where `pear run` was removed.
 Follow the steps in `SKILL.md` to install dependencies, run the admin peer, and join peers correctly.
+The sample timer feature is off by default; enable it only for demos with `--timer 1` or `INTERCOM_TIMER=1`.
 
 ## Architecture (ASCII map)
 Intercom is a single long-running Pear process that participates in three distinct networking "planes":
@@ -85,6 +86,13 @@ Intercom is a single long-running Pear process that participates in three distin
   - `SIDECHANNEL_RATE_BURST`
   - `SIDECHANNEL_MAX_STRIKES`
 - Set `--sidechannel-rate-bytes 0` (or `SIDECHANNEL_RATE_BYTES=0`) to disable the limiter entirely on that peer.
+
+## Sample Timer
+- The sample timer feature writes periodic contract entries and is disabled by default.
+- Enable it only when explicitly testing the sample contract timer path:
+  ```bash
+  npm start -- --timer 1 --peer-store-name timer-demo --msb-store-name timer-demo-msb
+  ```
 
 ---
 If you plan to build your own app, study the existing contract/protocol and remove example logic as needed (see `SKILL.md`).
