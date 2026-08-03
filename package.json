@@ -16,6 +16,7 @@
     "path": "npm:bare-node-path",
     "pear-runtime": "1.3.1",
     "protomux": "^3.10.1",
+    "hyperschema": "1.17.1",
     "trac-msb": "github:Trac-Systems/main_settlement_bus#v0.2.19",
     "trac-peer": "github:Trac-Systems/trac-peer#v0.4.6",
     "trac-wallet": "1.0.1",

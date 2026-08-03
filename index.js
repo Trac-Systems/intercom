@@ -554,24 +554,64 @@ const sidechannel = new Sidechannel(peer, {
 });
 peer.sidechannel = sidechannel;
 
+let terminalReadline = null;
+let shutdownStarted = false;
+let resolveLifetime = null;
+const lifetime = new Promise((resolve) => {
+  resolveLifetime = resolve;
+});
+const shutdown = async () => {
+  if (shutdownStarted) return;
+  shutdownStarted = true;
+  try {
+    terminalReadline?.close?.();
+  } catch (_e) {}
+  try {
+    scBridge?.stop?.();
+  } catch (_e) {}
+  try {
+    await sidechannel.stop?.();
+  } catch (_e) {}
+  try {
+    await peer.close?.();
+  } catch (_e) {}
+  try {
+    await msb.close?.();
+  } catch (_e) {}
+  resolveLifetime?.();
+  if (typeof Bare !== 'undefined' && Bare.exit) Bare.exit(0);
+};
+
+if (typeof Pear !== 'undefined' && Pear.teardown) Pear.teardown(shutdown);
+if (typeof process !== 'undefined' && process.once) {
+  for (const signal of ['SIGHUP', 'SIGINT', 'SIGTERM']) {
+    process.once(signal, () => {
+      void shutdown();
+    });
+  }
+}
+
 if (scBridge) {
   scBridge.attachSidechannel(sidechannel);
   try {
     scBridge.start();
   } catch (err) {
     console.error('SC-Bridge failed to start:', err?.message ?? err);
+    await shutdown();
+    throw err;
   }
   peer.scBridge = scBridge;
 }
 
-sidechannel
-  .start()
-  .then(() => {
-    console.log('Sidechannel: ready');
-  })
-  .catch((err) => {
-    console.error('Sidechannel failed to start:', err?.message ?? err);
-  });
+try {
+  await sidechannel.start();
+  console.log('Sidechannel: ready');
+} catch (err) {
+  console.error('Sidechannel failed to start:', err?.message ?? err);
+  await shutdown();
+  throw err;
+}
 
 const terminal = new Terminal(peer);
-await terminal.start();
+terminalReadline = await terminal.start();
+await lifetime;
