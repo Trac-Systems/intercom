@@ -17,9 +17,21 @@ test('sample timer is opt-in and does not write on default startup', () => {
   assert.match(indexSource, /if \(timerEnabled && admin && admin\.value === peer\.wallet\.publicKey && peer\.base\.writable\)/);
 });
 
+test('startup awaits sidechannel and owns the service lifetime', () => {
+  assert.match(indexSource, /await sidechannel\.start\(\);/);
+  assert.doesNotMatch(indexSource, /sidechannel\s*\.\s*start\(\)\s*\.\s*then/);
+  assert.match(indexSource, /const lifetime = new Promise/);
+  assert.match(indexSource, /Pear\.teardown\(shutdown\)/);
+  assert.match(indexSource, /await peer\.close\?\.\(\);/);
+  assert.match(indexSource, /await msb\.close\?\.\(\);/);
+  assert.match(indexSource, /await lifetime;/);
+});
+
 test('intercom depends on released trac-peer and trac-msb tags', () => {
+  assert.equal(packageJson.dependencies['hyperschema'], '1.17.1');
   assert.equal(packageJson.dependencies['trac-peer'], 'github:Trac-Systems/trac-peer#v0.4.6');
   assert.equal(packageJson.dependencies['trac-msb'], 'github:Trac-Systems/main_settlement_bus#v0.2.19');
+  assert.equal(packageLock.packages['node_modules/hyperschema'].version, '1.17.1');
   assert.equal(
     packageLock.packages['node_modules/trac-peer'].resolved,
     'git+ssh://git@github.com/Trac-Systems/trac-peer.git#64b8f401c13ee4e65ee3a29596f6517681e0879e'
