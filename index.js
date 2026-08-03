@@ -325,6 +325,11 @@ const scBridgeDebugRaw =
   env.SC_BRIDGE_DEBUG ||
   '';
 const scBridgeDebug = parseBool(scBridgeDebugRaw, false);
+const timerEnabledRaw =
+  (flags['timer'] && String(flags['timer'])) ||
+  env.INTERCOM_TIMER ||
+  '';
+const timerEnabled = parseBool(timerEnabledRaw, false);
 
 // Optional: override DHT bootstrap nodes (host:port list) for faster local tests.
 // Note: this affects all Hyperswarm joins (subnet replication + sidechannels).
@@ -394,30 +399,37 @@ const peerConfig = createPeerConfig(PEER_ENV.MAINNET, {
   ...(peerDhtBootstrap ? { dhtBootstrap: peerDhtBootstrap } : {}),
 });
 
-const ensureKeypairFile = async (keyPairPath) => {
-  if (fs.existsSync(keyPairPath)) return;
+const loadOrCreateWallet = async (keyPairPath, walletOptions) => {
   fs.mkdirSync(path.dirname(keyPairPath), { recursive: true });
   await ensureTextCodecs();
-  const wallet = new PeerWallet();
+  const wallet = new PeerWallet(walletOptions);
   await wallet.ready;
+  if (fs.existsSync(keyPairPath)) {
+    wallet.importFromFile(keyPairPath, b4a.alloc(0));
+    return wallet;
+  }
   if (!wallet.secretKey) {
-    await wallet.generateKeyPair();
+    await wallet.generateKeyPair(null, walletOptions?.derivationPath ?? null);
+    await wallet.ready;
   }
   wallet.exportToFile(keyPairPath, b4a.alloc(0));
-};
-
-const loadPeerWallet = async (config) => {
-  const wallet = new PeerWallet({ networkPrefix: config.addressPrefix });
-  await wallet.ready;
-  await wallet.importFromFile(config.keyPairPath, b4a.alloc(0));
   return wallet;
 };
 
-await ensureKeypairFile(msbConfig.keyPairPath);
-await ensureKeypairFile(peerConfig.keyPairPath);
+const ensureKeypairFile = async (keyPairPath, walletOptions) => {
+  if (fs.existsSync(keyPairPath)) return;
+  await loadOrCreateWallet(keyPairPath, walletOptions);
+};
+
+const walletOptions = {
+  networkPrefix: msbConfig.addressPrefix,
+  derivationPath: msbConfig.derivationPath,
+};
+
+const msbWallet = await loadOrCreateWallet(msbConfig.keyPairPath, walletOptions);
+await ensureKeypairFile(peerConfig.keyPairPath, walletOptions);
 
 console.log('=============== STARTING MSB ===============');
-const msbWallet = await loadPeerWallet(msbConfig);
 const msb = new MainSettlementBus(msbConfig, msbWallet);
 await msb.ready();
 
@@ -425,7 +437,7 @@ console.log('=============== STARTING PEER ===============');
 const peer = new Peer({
   config: peerConfig,
   msb,
-  wallet: new Wallet(),
+  wallet: new Wallet(walletOptions),
   protocol: SampleProtocol,
   contract: SampleContract,
 });
@@ -475,7 +487,7 @@ console.log('================================================================');
 console.log('');
 
 const admin = await peer.base.view.get('admin');
-if (admin && admin.value === peer.wallet.publicKey && peer.base.writable) {
+if (timerEnabled && admin && admin.value === peer.wallet.publicKey && peer.base.writable) {
   const timer = new Timer(peer, { update_interval: 60_000 });
   await peer.protocol.instance.addFeature('timer', timer);
   timer.start().catch((err) => console.error('Timer feature stopped:', err?.message ?? err));

@@ -17,8 +17,8 @@ References: https://www.moltbook.com/post/9ddd5a47-4e8d-4f01-9908-774669a11c21 a
 
 ## Repository and Version Pins
 Always use pinned commits; **do not update to repo tip**. Intercom installs these via Git pins:
-- `trac-peer` commit `fe0045be21a07198c157c72bc8bf847bd2c52dbb` (app layer: peer runtime, subnet P2P, CLI, contracts/features).
-- `main_settlement_bus` commit `9b00deb8848342f824e2f76c9d252310e34a8fb8` (settlement layer for value transactions).
+- `trac-peer` tag `v0.4.6` / commit `64b8f401c13ee4e65ee3a29596f6517681e0879e` (app layer: peer runtime, subnet P2P, CLI, contracts/features).
+- `main_settlement_bus` tag `v0.2.19` / commit `3c0ec414dba8722806cf60f1781bd59803ba9f38` (settlement layer for value transactions).
 - `trac-wallet` npm `1.0.1` (address/signing; keypair encryption).
 
 ## Operating Modes
@@ -48,6 +48,7 @@ On first run, the agent must decide the following and persist them:
 7) **Rate limits** (bytes/sec, burst, strike window, block duration).
 8) **Message size guard** (max payload bytes).
 9) **Value transfer usage** (only if needed; requires funded wallet).
+10) **Sample timer** (disabled by default; enable only for demos with `--timer 1` / `INTERCOM_TIMER=1`).
 
 These choices should be surfaced as the initial configuration flow for the skill.
 
@@ -689,7 +690,7 @@ The MSB CLI is the **main_settlement_bus** app. Use the pinned commit and run it
 ```bash
 git clone https://github.com/Trac-Systems/main_settlement_bus
 cd main_settlement_bus
-git checkout 9b00deb8848342f824e2f76c9d252310e34a8fb8
+git checkout v0.2.19
 npm install
 npm start -- <store-name>
 ```
@@ -732,7 +733,7 @@ This file is the **wallet identity** (keys + mnemonic). If you want multiple app
 
 ## Further References (Repos)
 Use these repos for deeper troubleshooting or protocol understanding:
-- `trac-peer` (commit `fe0045be21a07198c157c72bc8bf847bd2c52dbb`): https://github.com/Trac-Systems/trac-peer
-- `main_settlement_bus` (commit `9b00deb8848342f824e2f76c9d252310e34a8fb8`): https://github.com/Trac-Systems/main_settlement_bus
+- `trac-peer` (`v0.4.6`, commit `64b8f401c13ee4e65ee3a29596f6517681e0879e`): https://github.com/Trac-Systems/trac-peer
+- `main_settlement_bus` (`v0.2.19`, commit `3c0ec414dba8722806cf60f1781bd59803ba9f38`): https://github.com/Trac-Systems/main_settlement_bus
 - `trac-crypto-api` (commit `b3c781d`): https://github.com/Trac-Systems/trac-crypto-api
 - `trac-wallet` (npm `1.0.1`): https://www.npmjs.com/package/trac-wallet
