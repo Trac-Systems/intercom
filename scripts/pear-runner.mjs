@@ -34,6 +34,9 @@ export const selectPearRunnerMode = (output) => {
   return major !== null && major < 3 ? 'legacy' : 'module';
 };
 
+export const legacyPearRunRequested = (env = process.env) =>
+  /^(1|true|yes)$/i.test(String(env.MAYHEM_INTERCOM_LEGACY_PEAR_RUN ?? '').trim());
+
 const exitCodeFor = (code, signal) => {
   if (code !== null && code !== undefined) return code;
   const signalNumber = osConstants.signals?.[signal];
@@ -176,9 +179,14 @@ const runModule = async () => {
 };
 
 export const main = async () => {
-  const mode = selectPearRunnerMode(detectPear());
-  if (mode === 'legacy') runLegacy();
-  else await runModule();
+  if (legacyPearRunRequested()) {
+    const mode = selectPearRunnerMode(detectPear());
+    if (mode === 'legacy') {
+      runLegacy();
+      return;
+    }
+  }
+  await runModule();
 };
 
 const isMainModule = process.argv[1] &&
