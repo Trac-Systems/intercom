@@ -18,6 +18,8 @@ test('sample timer is opt-in and does not write on default startup', () => {
 });
 
 test('startup awaits sidechannel and owns the service lifetime', () => {
+  assert.match(indexSource, /globalThis\.Bare\?\.argv/);
+  assert.match(indexSource, /toArgMap\(bareArgv\.slice/);
   assert.match(indexSource, /await sidechannel\.start\(\);/);
   assert.doesNotMatch(indexSource, /sidechannel\s*\.\s*start\(\)\s*\.\s*then/);
   assert.match(indexSource, /const lifetime = new Promise/);

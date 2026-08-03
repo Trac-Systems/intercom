@@ -7,7 +7,7 @@ import { Peer, Wallet, createConfig as createPeerConfig, ENV as PEER_ENV } from 
 import { MainSettlementBus } from 'trac-msb/src/index.js';
 import { createConfig as createMsbConfig, ENV as MSB_ENV } from 'trac-msb/src/config/env.js';
 import { ensureTextCodecs } from 'trac-peer/src/textCodec.js';
-import { getPearRuntime, ensureTrailingSlash } from 'trac-peer/src/runnerArgs.js';
+import { getPearRuntime, ensureTrailingSlash, toArgMap } from 'trac-peer/src/runnerArgs.js';
 import { Terminal } from 'trac-peer/src/terminal/index.js';
 import SampleProtocol from './contract/protocol.js';
 import SampleContract from './contract/contract.js';
@@ -15,7 +15,20 @@ import { Timer } from './features/timer/index.js';
 import Sidechannel from './features/sidechannel/index.js';
 import ScBridge from './features/sc-bridge/index.js';
 
-const { env, storeLabel, flags } = getPearRuntime();
+const getIntercomRuntime = () => {
+  const runtime = getPearRuntime();
+  const bareArgv = Array.isArray(globalThis.Bare?.argv) ? globalThis.Bare.argv.slice(2) : null;
+  if (!bareArgv || bareArgv.length === 0 || (runtime.argv && runtime.argv.length > 0)) return runtime;
+  const storeLabel = bareArgv[0] && !String(bareArgv[0]).startsWith('--') ? String(bareArgv[0]) : null;
+  return {
+    ...runtime,
+    argv: bareArgv,
+    storeLabel,
+    flags: toArgMap(bareArgv.slice(storeLabel ? 1 : 0)),
+  };
+};
+
+const { env, storeLabel, flags } = getIntercomRuntime();
 
 const peerStoreNameRaw =
   (flags['peer-store-name'] && String(flags['peer-store-name'])) ||
