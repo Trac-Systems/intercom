@@ -17,7 +17,7 @@
     "pear-runtime": "1.3.1",
     "protomux": "^3.10.1",
     "trac-msb": "github:Trac-Systems/main_settlement_bus#9b00deb8848342f824e2f76c9d252310e34a8fb8",
-    "trac-peer": "github:Trac-Systems/trac-peer#fe0045be21a07198c157c72bc8bf847bd2c52dbb",
+    "trac-peer": "github:Trac-Systems/trac-peer#bd8a085f7935e204a2964faa860bf212dbdafa49",
     "trac-wallet": "1.0.1",
     "util": "npm:bare-node-util"
   },
