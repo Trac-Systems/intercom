@@ -29,10 +29,10 @@ test('startup awaits sidechannel and owns the service lifetime', () => {
   assert.match(indexSource, /await lifetime;/);
 });
 
-test('intercom depends on pinned trac-peer and released trac-msb', () => {
+test('intercom depends on pinned trac-peer and patched released trac-msb', () => {
   assert.equal(packageJson.dependencies['hyperschema'], '1.17.1');
   assert.equal(packageJson.dependencies['trac-peer'], 'github:Trac-Systems/trac-peer#b157f7e8ef59e705c0eb00060e3384fa2e2f8bc8');
-  assert.equal(packageJson.dependencies['trac-msb'], 'github:Trac-Systems/main_settlement_bus#v0.2.19');
+  assert.equal(packageJson.dependencies['trac-msb'], 'github:Trac-Systems/main_settlement_bus#237ccca5f95918193bce25f3cab6909fe0cfc0f1');
   assert.equal(packageLock.packages['node_modules/hyperschema'].version, '1.17.1');
   assert.equal(
     packageLock.packages['node_modules/trac-peer'].resolved,
@@ -40,6 +40,6 @@ test('intercom depends on pinned trac-peer and released trac-msb', () => {
   );
   assert.equal(
     packageLock.packages['node_modules/trac-msb'].resolved,
-    'git+ssh://git@github.com/Trac-Systems/main_settlement_bus.git#3c0ec414dba8722806cf60f1781bd59803ba9f38'
+    'git+ssh://git@github.com/Trac-Systems/main_settlement_bus.git#237ccca5f95918193bce25f3cab6909fe0cfc0f1'
   );
 });
