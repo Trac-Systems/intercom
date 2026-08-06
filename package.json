@@ -3,6 +3,9 @@
   "version": "0.0.1",
   "type": "module",
   "main": "index.js",
+  "scripts": {
+    "ui": "node scripts/serve-ui.mjs"
+  },
   "pear": {
     "name": "contract-test-latest",
     "type": "terminal"

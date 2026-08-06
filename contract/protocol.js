@@ -85,6 +85,92 @@ const parseWelcomeArg = (raw) => {
     return null;
 };
 
+const parseMembersArg = (raw) => {
+    if (Array.isArray(raw)) {
+        return raw
+            .map((value) => String(value || '').trim().toLowerCase())
+            .filter((value) => value.length > 0);
+    }
+    if (!raw) return [];
+    return String(raw)
+        .split(',')
+        .map((value) => value.trim().toLowerCase())
+        .filter((value) => value.length > 0);
+};
+
+const formatCents = (cents) => (Number(cents || 0) / 100).toFixed(2);
+const normalizeChannel = (value) => String(value || '').trim().toLowerCase();
+const parseBoolFlag = (value, fallback = false) => {
+    if (value === undefined || value === null || value === '') return fallback;
+    return ['1', 'true', 'yes', 'on'].includes(String(value).trim().toLowerCase());
+};
+
+const buildExpenseExport = (summary, format = 'text') => {
+    const normalizedFormat = String(format || 'text').trim().toLowerCase();
+    const generatedAt = new Date().toISOString();
+    const balances = Array.isArray(summary?.balances) ? summary.balances : [];
+    const settlements = Array.isArray(summary?.settlements) ? summary.settlements : [];
+
+    if (normalizedFormat === 'json') {
+        return {
+            format: 'json',
+            data: JSON.stringify({
+                app: 'intersplit',
+                version: 1,
+                generatedAt,
+                channel: summary.channel,
+                eventCount: summary.eventCount ?? 0,
+                total: formatCents(summary.totalCents ?? 0),
+                balances: balances.map((entry) => ({
+                    member: entry.member,
+                    cents: entry.cents,
+                    amount: formatCents(Math.abs(entry.cents ?? 0)),
+                    direction: entry.cents >= 0 ? 'receives' : 'owes'
+                })),
+                settlements: settlements.map((entry) => ({
+                    from: entry.from,
+                    to: entry.to,
+                    cents: entry.amountCents,
+                    amount: formatCents(entry.amountCents)
+                }))
+            }, null, 2)
+        };
+    }
+
+    if (normalizedFormat === 'csv') {
+        const lines = ['from,to,amount'];
+        for (const row of settlements) {
+            lines.push(`${row.from},${row.to},${formatCents(row.amountCents)}`);
+        }
+        return { format: 'csv', data: lines.join('\n') };
+    }
+
+    const lines = [];
+    lines.push('InterSplit Settlement Export');
+    lines.push(`generated_at: ${generatedAt}`);
+    lines.push(`channel: ${summary.channel}`);
+    lines.push(`events: ${summary.eventCount ?? 0}`);
+    lines.push(`total: ${formatCents(summary.totalCents ?? 0)}`);
+    lines.push('balances:');
+    if (balances.length === 0) {
+        lines.push('- none');
+    } else {
+        for (const entry of balances) {
+            const sign = entry.cents >= 0 ? '+' : '-';
+            lines.push(`- ${entry.member}: ${sign}${formatCents(Math.abs(entry.cents))}`);
+        }
+    }
+    lines.push('settlements:');
+    if (settlements.length === 0) {
+        lines.push('- none');
+    } else {
+        for (const row of settlements) {
+            lines.push(`- ${row.from} -> ${row.to}: ${formatCents(row.amountCents)}`);
+        }
+    }
+    return { format: 'text', data: lines.join('\n') };
+};
+
 class SampleProtocol extends Protocol{
 
     /**
@@ -198,6 +284,18 @@ class SampleProtocol extends Protocol{
                 obj.type = 'readTimer';
                 obj.value = null;
                 return obj;
+            } else if (json.op !== undefined && json.op === 'expense_upsert_room') {
+                obj.type = 'expenseUpsertRoom';
+                obj.value = json;
+                return obj;
+            } else if (json.op !== undefined && json.op === 'expense_delete_room') {
+                obj.type = 'expenseDeleteRoom';
+                obj.value = json;
+                return obj;
+            } else if (json.op !== undefined && json.op === 'expense_read_room') {
+                obj.type = 'expenseReadRoom';
+                obj.value = json;
+                return obj;
             }
         }
         // return null if no case matches.
@@ -224,6 +322,13 @@ class SampleProtocol extends Protocol{
         console.log('- /sc_invite --channel "<name>" --pubkey "<peer-pubkey-hex>" [--ttl <sec>] [--welcome <json|b64|@file>] | create a signed invite.');
         console.log('- /sc_welcome --channel "<name>" --text "<message>" | create a signed welcome.');
         console.log('- /sc_stats | show sidechannel channels + connection count.');
+        console.log('- /expense_add --channel "<name>" --payer "<name>" --amount "<n>" --split "a,b,c" [--note "<text>"] | add an expense entry.');
+        console.log('- /expense_list --channel "<name>" | print expense events for a room.');
+        console.log('- /expense_balance --channel "<name>" | print balances and suggested settlements.');
+        console.log('- /expense_clear --channel "<name>" | clear the local room ledger and broadcast reset.');
+        console.log('- /expense_persist --channel "<name>" [--sim 1] | persist current room snapshot into contract state.');
+        console.log('- /expense_restore --channel "<name>" [--confirmed 1|0] [--replace 1] | load room snapshot from contract state.');
+        console.log('- /expense_export --channel "<name>" [--format text|json|csv] | one-shot settlement export.');
         // further protocol specific options go here
     }
 
@@ -587,6 +692,213 @@ class SampleProtocol extends Protocol{
             const channels = Array.from(this.peer.sidechannel.channels.keys());
             const connectionCount = this.peer.sidechannel.connections.size;
             console.log({ channels, connectionCount });
+            return;
+        }
+        if (this.input.startsWith("/expense_add")) {
+            if (!this.peer.expenseSplit) {
+                console.log('Expense split app not initialized.');
+                return;
+            }
+            const args = this.parseArgs(input);
+            const channel = args.channel || args.ch || args.room || this.peer.sidechannel?.entryChannel || '0000intercom';
+            const payer = args.payer || args.p;
+            const amount = args.amount || args.a;
+            const split = parseMembersArg(args.split || args.members || args.with);
+            const note = args.note || args.memo || '';
+            if (!payer || !amount || split.length === 0) {
+                console.log('Usage: /expense_add --channel "<name>" --payer "<name>" --amount "<n>" --split "a,b,c" [--note "<text>"]');
+                return;
+            }
+            const result = this.peer.expenseSplit.addExpense({ channel, payer, amount, split, note });
+            if (!result.ok) {
+                console.log(result.error || 'Failed to add expense.');
+                return;
+            }
+            console.log(
+                `[expense:${result.channel}] added ${formatCents(result.event.amountCents)} by ${result.event.payer} split=${result.event.split.join(',')}`
+            );
+            return;
+        }
+        if (this.input.startsWith("/expense_list")) {
+            if (!this.peer.expenseSplit) {
+                console.log('Expense split app not initialized.');
+                return;
+            }
+            const args = this.parseArgs(input);
+            const channel = args.channel || args.ch || args.room || this.peer.sidechannel?.entryChannel || '0000intercom';
+            const events = this.peer.expenseSplit.list(channel);
+            if (events.length === 0) {
+                console.log(`[expense:${channel}] no expenses yet.`);
+                return;
+            }
+            console.log(`[expense:${channel}] entries=${events.length}`);
+            for (const event of events) {
+                console.log(
+                    `- ${new Date(event.ts).toISOString()} | ${event.payer} paid ${formatCents(event.amountCents)} | split=${event.split.join(',')} | note=${event.note || '-'}`
+                );
+            }
+            return;
+        }
+        if (this.input.startsWith("/expense_balance")) {
+            if (!this.peer.expenseSplit) {
+                console.log('Expense split app not initialized.');
+                return;
+            }
+            const args = this.parseArgs(input);
+            const channel = args.channel || args.ch || args.room || this.peer.sidechannel?.entryChannel || '0000intercom';
+            const summary = this.peer.expenseSplit.summary(channel);
+            console.log(`[expense:${summary.channel}] entries=${summary.eventCount} total=${formatCents(summary.totalCents)}`);
+            if (summary.balances.length === 0) {
+                console.log('- no balances yet.');
+                return;
+            }
+            console.log('- balances:');
+            for (const entry of summary.balances) {
+                const sign = entry.cents >= 0 ? '+' : '-';
+                console.log(`  ${entry.member}: ${sign}${formatCents(Math.abs(entry.cents))}`);
+            }
+            if (summary.settlements.length === 0) {
+                console.log('- settlements: none');
+                return;
+            }
+            console.log('- settlements:');
+            for (const move of summary.settlements) {
+                console.log(`  ${move.from} -> ${move.to}: ${formatCents(move.amountCents)}`);
+            }
+            return;
+        }
+        if (this.input.startsWith("/expense_clear")) {
+            if (!this.peer.expenseSplit) {
+                console.log('Expense split app not initialized.');
+                return;
+            }
+            const args = this.parseArgs(input);
+            const channel = args.channel || args.ch || args.room || this.peer.sidechannel?.entryChannel || '0000intercom';
+            const result = this.peer.expenseSplit.clearChannel(channel);
+            if (!result.ok) {
+                console.log('Failed to clear ledger.');
+                return;
+            }
+            console.log(`[expense:${result.channel}] ledger cleared.`);
+            return;
+        }
+        if (this.input.startsWith("/expense_persist")) {
+            if (!this.peer.expenseSplit) {
+                console.log('Expense split app not initialized.');
+                return;
+            }
+            if (this.peer.base?.writable === false) {
+                console.log('Peer is not writable; cannot persist contract state.');
+                return;
+            }
+            const args = this.parseArgs(input);
+            const channelRaw = args.channel || args.ch || args.room || this.peer.sidechannel?.entryChannel || '0000intercom';
+            const channel = normalizeChannel(channelRaw);
+            if (!channel) {
+                console.log('Usage: /expense_persist --channel "<name>" [--sim 1]');
+                return;
+            }
+            const snapshot = this.peer.expenseSplit.exportRoom(channel);
+            const commandObj = {
+                op: 'expense_upsert_room',
+                channel,
+                snapshot
+            };
+            const command = this.safeJsonStringify(commandObj);
+            if (command === null) {
+                console.log('Failed to serialize snapshot for tx payload.');
+                return;
+            }
+            const sim = parseBoolFlag(args.sim, false);
+            try {
+                const result = await this.tx({ command }, sim);
+                const err = this.getError(result);
+                if (err) {
+                    console.log(`Persist failed: ${err.message}`);
+                    return;
+                }
+                if (sim) {
+                    console.log(`[expense:${channel}] persist simulated.`);
+                    console.log(result);
+                    return;
+                }
+                if (result?.txo?.tx) {
+                    console.log(`[expense:${channel}] persisted. tx=${result.txo.tx}`);
+                    return;
+                }
+                console.log(`[expense:${channel}] persist broadcast submitted.`);
+            } catch (err) {
+                console.log(`Persist failed: ${err?.message ?? String(err)}`);
+            }
+            return;
+        }
+        if (this.input.startsWith("/expense_restore")) {
+            if (!this.peer.expenseSplit) {
+                console.log('Expense split app not initialized.');
+                return;
+            }
+            const args = this.parseArgs(input);
+            const channelRaw = args.channel || args.ch || args.room || this.peer.sidechannel?.entryChannel || '0000intercom';
+            const channel = normalizeChannel(channelRaw);
+            if (!channel) {
+                console.log('Usage: /expense_restore --channel "<name>" [--confirmed 1|0] [--replace 1]');
+                return;
+            }
+            const key = `expense/room/${channel}`;
+            const confirmed = args.unconfirmed !== undefined ? false : parseBoolFlag(args.confirmed, true);
+            const replace = parseBoolFlag(args.replace, false);
+            const value = confirmed ? await this.getSigned(key) : await this.get(key);
+            if (!value || value.deleted === true || value.snapshot === null) {
+                const localSnapshot = this.peer.expenseSplit.getLocalSnapshot(channel);
+                if (!localSnapshot) {
+                    console.log(`[expense:${channel}] no persisted snapshot found.`);
+                    return;
+                }
+                const localImported = this.peer.expenseSplit.importRoom(localSnapshot, { replace });
+                if (!localImported.ok) {
+                    console.log(localImported.error || 'Failed to import local snapshot.');
+                    return;
+                }
+                console.log(
+                    `[expense:${localImported.channel}] restored from local snapshot added=${localImported.added} total=${localImported.total} replace=${replace ? '1' : '0'}`
+                );
+                return;
+            }
+            const snapshot = value?.snapshot && typeof value.snapshot === 'object' ? value.snapshot : value;
+            const imported = this.peer.expenseSplit.importRoom(snapshot, { replace });
+            if (!imported.ok) {
+                console.log(imported.error || 'Failed to import persisted snapshot.');
+                return;
+            }
+            console.log(
+                `[expense:${imported.channel}] restored added=${imported.added} total=${imported.total} source=${confirmed ? 'signed' : 'view'} replace=${replace ? '1' : '0'}`
+            );
+            return;
+        }
+        if (this.input.startsWith("/expense_export")) {
+            if (!this.peer.expenseSplit) {
+                console.log('Expense split app not initialized.');
+                return;
+            }
+            const args = this.parseArgs(input);
+            const channelRaw = args.channel || args.ch || args.room || this.peer.sidechannel?.entryChannel || '0000intercom';
+            const channel = normalizeChannel(channelRaw);
+            if (!channel) {
+                console.log('Usage: /expense_export --channel "<name>" [--format text|json|csv]');
+                return;
+            }
+            const format = String(args.format || 'text').trim().toLowerCase();
+            const summary = this.peer.expenseSplit.summary(channel);
+            const out = buildExpenseExport(summary, format);
+            if (!out || !out.data) {
+                console.log('Export failed.');
+                return;
+            }
+            console.log(out.data);
+            if (out.format === 'json' || out.format === 'text') {
+                const b64 = b4a.toString(b4a.from(out.data, 'utf8'), 'base64');
+                console.log('export_b64:', b64);
+            }
             return;
         }
         if (this.input.startsWith("/print")) {
