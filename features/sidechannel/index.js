@@ -896,8 +896,40 @@ class Sidechannel extends Feature {
             }
           }
         } else {
-          // Avoid spamming logs for handshake control messages.
-          if (control === 'auth') return;
+          // SECURITY: control handshake frames (auth, welcome) are transport
+          // control, never application CONTENT. Give BOTH a terminal return so a
+          // control frame can never be dispatched to the app handler or relayed.
+          // Previously only `auth` returned; a `welcome` frame fell through to
+          // onMessage below. Because the owner-signature gate above is
+          // intentionally skipped for `welcome` frames (so listeners can
+          // authorize without write access), any peer holding the owner's
+          // (semi-public) signed welcome could set message.control = 'welcome'
+          // and inject spoofed-`from` content on an owner-write-only channel. The
+          // welcome's legitimate side effect (establishing channel access via
+          // _verifyWelcome -> _rememberWelcome) has already run above; here we
+          // only stop the frame being delivered/relayed as content.
+          if (control === 'auth' || control === 'welcome') return;
+          // Defense in depth: on owner-write-only channels ONLY frames carrying a
+          // valid CHANNEL-OWNER signature over the payload are delivered as
+          // content. This is self-contained at the sidechannel layer (uses only
+          // the configured owner key + _verifySig); it does NOT depend on any
+          // subnet contract / writer / admin / MSB, so owner-write-only holds for
+          // pure sidechannel deployments with no contract enabled. The early gate
+          // above already enforces this for non-control frames; this second check
+          // guarantees no control-frame path can reach the app handler with
+          // unsigned or spoofed content.
+          if (this._ownerWriteOnly(entry.name)) {
+            const ownerKey = this._getOwnerKey(entry.name);
+            const author = normalizeKeyHex(payload?.from);
+            if (!ownerKey || !author || author !== ownerKey || !this._verifySig(payload, ownerKey)) {
+              if (this.debug) {
+                console.log(
+                  `[sidechannel:${entry.name}] drop (owner-only content) from ${this._getRemoteKey(connection)}`
+                );
+              }
+              return;
+            }
+          }
           if (this.onMessage) {
             this.onMessage(entry.name, payload, connection);
           } else {
