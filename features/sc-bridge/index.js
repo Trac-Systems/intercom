@@ -304,6 +304,13 @@ class ScBridge extends Feature {
         if (invite || welcome) {
           this.sidechannel.acceptInvite(channel, invite, welcome);
         }
+        // `addChannel` resolves only once the topic is genuinely announced on
+        // the swarm, so the reply is deferred for as long as that takes (a join
+        // arriving while the sidechannel is still bootstrapping waits for
+        // start() to announce it). `announced: true` states that contract
+        // explicitly: a `joined` reply always means discoverable, never merely
+        // registered. Clients that give up first see their own timeout rather
+        // than a premature success.
         this.sidechannel
           .addChannel(channel)
           .then((ok) => {
@@ -311,7 +318,7 @@ class ScBridge extends Feature {
               sendError('Join denied (invite required or invalid).');
               return;
             }
-            reply({ type: 'joined', channel });
+            reply({ type: 'joined', channel, announced: true });
           })
           .catch((err) => {
             sendError(err?.message ? `Join failed: ${err.message}` : 'Join failed.');

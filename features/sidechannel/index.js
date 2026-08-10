@@ -10,6 +10,10 @@ const toTopic = (name) =>
   crypto.createHash('sha256').update(`sidechannel:${normalizeChannel(name)}`).digest();
 const toProtocol = (name) => `sidechannel/${name}`;
 
+// Upper bound on any single swarm.flush() wait (announce/leave). Degraded
+// networks can leave a flush pending indefinitely; the node must keep running.
+const FLUSH_TIMEOUT_MS = 10_000;
+
 const stableStringify = (value) => {
   if (value === null || value === undefined) return 'null';
   if (typeof value !== 'object') return JSON.stringify(value);
@@ -987,22 +991,95 @@ class Sidechannel extends Feature {
       .catch(() => {});
   }
 
+  // Flush can hang in degraded networks. Bound the wait so the app can keep
+  // running, and always clear the timer so a bounded flush never keeps the
+  // process (or a test run) alive.
+  async _flushSwarm() {
+    if (typeof this.peer?.swarm?.flush !== 'function') return;
+    let timer = null;
+    const flushP = Promise.resolve()
+      .then(() => this.peer.swarm.flush())
+      .catch(() => {});
+    const timeoutP = new Promise((resolve) => {
+      timer = setTimeout(resolve, FLUSH_TIMEOUT_MS);
+    });
+    try {
+      await Promise.race([flushP, timeoutP]);
+    } finally {
+      if (timer !== null) clearTimeout(timer);
+    }
+  }
+
+  // A channel is "announced" once its topic has actually been put on the swarm
+  // (join + flush). Registration alone is not announcement: a registered but
+  // unannounced channel is invisible to discovery, so nothing may report it as
+  // joined.
+  _markAnnounced(entry, announced = true) {
+    if (!entry) return;
+    entry.announced = announced === true;
+    const waiters = entry._announceWaiters;
+    entry._announceWaiters = null;
+    if (!waiters) return;
+    for (const resolve of waiters) resolve(entry.announced);
+  }
+
+  // Resolves when `entry` is announced (true) or definitively will not be —
+  // stop()/removeChannel() release pending waiters with false so a caller can
+  // never hang forever on a channel that went away.
+  _whenAnnounced(entry) {
+    if (!entry) return Promise.resolve(false);
+    if (entry.announced) return Promise.resolve(true);
+    if (!entry._announceWaiters) entry._announceWaiters = [];
+    return new Promise((resolve) => entry._announceWaiters.push(resolve));
+  }
+
+  // Announce one channel now. Concurrent callers share the in-flight announce;
+  // swarm.join is idempotent per topic, so a re-announce is harmless.
+  _announceChannel(entry) {
+    if (!entry) return Promise.resolve(false);
+    if (entry.announced) return Promise.resolve(true);
+    if (entry._announcing) return entry._announcing;
+    if (!this.peer?.swarm) return Promise.resolve(false);
+    const announcing = (async () => {
+      try {
+        this.peer.swarm.join(entry.topic, { server: true, client: true });
+        await this._flushSwarm();
+        this._markAnnounced(entry, true);
+        return true;
+      } catch (err) {
+        if (this.debug) {
+          console.log(`[sidechannel:${entry.name}] announce failed: ${err?.message ?? err}`);
+        }
+        return false;
+      } finally {
+        entry._announcing = null;
+      }
+    })();
+    entry._announcing = announcing;
+    return announcing;
+  }
+
+  /**
+   * Join a channel and announce its topic on the swarm.
+   *
+   * Resolves `true` only once the topic is genuinely announced, so a caller
+   * (e.g. the SC-Bridge `join` reply) never claims membership of a channel that
+   * discovery cannot see. While the sidechannel is still bootstrapping the
+   * channel is registered and the caller waits for `start()` to announce it —
+   * start()'s post-flush re-scan picks up exactly these late registrations.
+   */
   async addChannel(name) {
     const entry = this._registerChannel(name);
     if (!entry) return false;
-    if (this.started && this.peer?.swarm) {
-      this.peer.swarm.join(entry.topic, { server: true, client: true });
-      {
-        const flushTimeoutMs = 10_000;
-        const flushP = Promise.resolve()
-          .then(() => this.peer.swarm.flush())
-          .catch(() => {});
-        await Promise.race([flushP, new Promise((resolve) => setTimeout(resolve, flushTimeoutMs))]);
-      }
+    if (entry.announced) return true;
+    if (!this.peer?.swarm) return false;
+    const announced = this.started
+      ? await this._announceChannel(entry)
+      : await this._whenAnnounced(entry);
+    if (!announced) return false;
 
-      for (const connection of this.connections.keys()) {
-        this._openChannelForConnection(connection, entry);
-      }
+    for (const connection of this.connections.keys()) {
+      this._openChannelForConnection(connection, entry);
     }
     return true;
   }
@@ -1033,6 +1110,11 @@ class Sidechannel extends Feature {
 
     const normalized = normalizeChannel(entry.name);
 
+    // Release anyone waiting for this channel to be announced: it is going away,
+    // so the answer is a definitive "not joined" rather than a hang.
+    const wasAnnounced = entry.announced === true;
+    this._markAnnounced(entry, false);
+
     // Drop in-memory per-channel state to avoid unbounded growth from ephemeral channels.
     this.channels.delete(entry.name);
     this.invitedPeers.delete(entry.name);
@@ -1041,21 +1123,16 @@ class Sidechannel extends Feature {
     this.welcomeByChannel.delete(normalized);
     this.welcomedChannels.delete(normalized);
 
-    // Best-effort: stop swarm discovery for the topic if supported.
-    if (this.started && this.peer?.swarm) {
+    // Best-effort: stop swarm discovery for the topic if supported. Leave only
+    // what was actually announced — an unannounced topic was never on the swarm.
+    if (wasAnnounced && this.peer?.swarm) {
       try {
         if (typeof this.peer.swarm.leave === 'function') {
           this.peer.swarm.leave(entry.topic);
         }
       } catch (_e) {}
       try {
-        if (typeof this.peer.swarm.flush === 'function') {
-          const flushTimeoutMs = 10_000;
-          const flushP = Promise.resolve()
-            .then(() => this.peer.swarm.flush())
-            .catch(() => {});
-          await Promise.race([flushP, new Promise((resolve) => setTimeout(resolve, flushTimeoutMs))]);
-        }
+        await this._flushSwarm();
       } catch (_e) {}
     }
 
@@ -1148,6 +1225,18 @@ class Sidechannel extends Feature {
 
   async start() {
     if (this.started) return;
+    // Readiness only flips once every registered topic is announced, so start()
+    // spans two awaited flushes. Share one run between concurrent callers rather
+    // than letting a second call re-join and re-flush behind the first.
+    if (!this._startPromise) {
+      this._startPromise = this._start().finally(() => {
+        this._startPromise = null;
+      });
+    }
+    return this._startPromise;
+  }
+
+  async _start() {
     if (!this.peer?.swarm) {
       throw new Error('Sidechannel requires peer.swarm to be initialized.');
     }
@@ -1178,18 +1267,35 @@ class Sidechannel extends Feature {
       });
     });
 
+    const round = [];
     for (const entry of this.channels.values()) {
       this.peer.swarm.join(entry.topic, { server: true, client: true });
+      round.push(entry);
     }
-    // Flush can hang in degraded networks. Bound the wait so the app can keep running.
-    {
-      const flushTimeoutMs = 10_000;
-      const flushP = Promise.resolve()
-        .then(() => this.peer.swarm.flush())
-        .catch(() => {});
-      await Promise.race([flushP, new Promise((resolve) => setTimeout(resolve, flushTimeoutMs))]);
+    await this._flushSwarm();
+    for (const entry of round) {
+      // removeChannel() may have dropped the entry mid-flush; do not resurrect it.
+      if (this.channels.get(entry.name) === entry) this._markAnnounced(entry, true);
     }
+
+    // `addChannel` does not join on its own until `started` flips, so a channel
+    // registered while the flush above was in flight (a bridge `join` landing
+    // mid-bootstrap) missed the join round and would stay
+    // registered-but-never-announced — invisible to discovery until restart.
+    // Flip readiness first, then re-scan for exactly those stragglers: after the
+    // flip every later caller announces through the same idempotent path, and
+    // the flip plus the re-scan below run in one synchronous step, so no
+    // registration can slip between them.
     this.started = true;
+
+    const stragglers = [];
+    for (const entry of this.channels.values()) {
+      if (entry.announced || entry._announcing) continue;
+      stragglers.push(entry);
+    }
+    if (stragglers.length > 0) {
+      await Promise.all(stragglers.map((entry) => this._announceChannel(entry)));
+    }
 
     if (this.peer.swarm.connections) {
       for (const connection of this.peer.swarm.connections) {
@@ -1204,6 +1310,10 @@ class Sidechannel extends Feature {
     this.started = false;
     this._dhtBootPromise = null;
     this.connections.clear();
+    // Nothing is on the swarm any more: drop announced state (a later start()
+    // re-announces from scratch) and release pending waiters with a truthful
+    // "not joined" instead of leaving them hanging.
+    for (const entry of this.channels.values()) this._markAnnounced(entry, false);
   }
 }
 
