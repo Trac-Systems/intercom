@@ -31,15 +31,35 @@ test('startup awaits sidechannel and owns the service lifetime', () => {
 
 test('intercom depends on pinned trac-peer and patched released trac-msb', () => {
   assert.equal(packageJson.dependencies['hyperschema'], '1.17.1');
-  assert.equal(packageJson.dependencies['trac-peer'], 'github:Trac-Systems/trac-peer#370e81cfff52524ac12b789f73fc3b2e6802c7fa');
-  assert.equal(packageJson.dependencies['trac-msb'], 'github:Trac-Systems/main_settlement_bus#7220c257d8c493456714791e03f7021dbcfc7c85');
+  assert.equal(packageJson.dependencies['trac-peer'], 'github:Trac-Systems/trac-peer#e4b52ad1e5d3f48aea06f5e19a3830685dcfa441');
+  assert.equal(packageJson.dependencies['trac-msb'], 'github:Trac-Systems/main_settlement_bus#ea72a9c82a85059c014387cb21f759d2419bed3c');
   assert.equal(packageLock.packages['node_modules/hyperschema'].version, '1.17.1');
   assert.equal(
     packageLock.packages['node_modules/trac-peer'].resolved,
-    'git+ssh://git@github.com/Trac-Systems/trac-peer.git#370e81cfff52524ac12b789f73fc3b2e6802c7fa'
+    'git+ssh://git@github.com/Trac-Systems/trac-peer.git#e4b52ad1e5d3f48aea06f5e19a3830685dcfa441'
   );
   assert.equal(
     packageLock.packages['node_modules/trac-msb'].resolved,
-    'git+ssh://git@github.com/Trac-Systems/main_settlement_bus.git#7220c257d8c493456714791e03f7021dbcfc7c85'
+    'git+ssh://git@github.com/Trac-Systems/main_settlement_bus.git#ea72a9c82a85059c014387cb21f759d2419bed3c'
   );
+});
+
+test('the tree resolves one hyperdht, at or past the null node-id guard', () => {
+  // hyperdht 6.29.4 gated its persistent request dispatcher on the node id
+  // (holepunchto/hyperdht#242). Before that, an inbound UNANNOUNCE arriving while
+  // the node was ephemeral reached `onunannounce` with a null `dht.id`, which
+  // sodium dereferences in C — a long-running peer aborted every few days.
+  //
+  // Both Trac pins carry this transitively, and they have to agree: trac-peer
+  // depends on trac-msb at its own sha, so bumping one pin and not the other
+  // installs a SECOND, nested trac-msb with the old hyperdht underneath it. The
+  // lockfile reads as fixed while the peer keeps crashing on the nested copy.
+  assert.equal(packageLock.packages['node_modules/hyperdht'].version, '6.29.6');
+  const nested = Object.keys(packageLock.packages).filter(
+    (key) => key !== 'node_modules/hyperdht' && key.endsWith('/hyperdht')
+  );
+  assert.deepEqual(nested, [], `hyperdht must resolve to a single copy, found: ${nested.join(', ')}`);
+  const buses = Object.keys(packageLock.packages).filter((key) => key.endsWith('/trac-msb'));
+  assert.deepEqual(buses, ['node_modules/trac-msb'],
+    `trac-msb must resolve to a single copy, found: ${buses.join(', ')}`);
 });
