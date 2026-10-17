@@ -1,0 +1,307 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>InterSplit Control Panel</title>
+    <link rel="preconnect" href="https://fonts.googleapis.com" />
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+    <link
+      href="https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@400;500;700&family=IBM+Plex+Mono:wght@400;600&display=swap"
+      rel="stylesheet"
+    />
+    <style>
+      :root {
+        --bg: #f8f6ef;
+        --paper: #fffdf7;
+        --ink: #152238;
+        --muted: #5f6b7a;
+        --line: #d8d9db;
+        --accent: #0d9488;
+        --accent-2: #f59e0b;
+        --danger: #dc2626;
+      }
+      * {
+        box-sizing: border-box;
+      }
+      body {
+        margin: 0;
+        font-family: 'Space Grotesk', sans-serif;
+        color: var(--ink);
+        background:
+          radial-gradient(circle at 20% 10%, #f9e8c8 0, transparent 35%),
+          radial-gradient(circle at 90% 10%, #c8f3ee 0, transparent 28%),
+          var(--bg);
+      }
+      .wrap {
+        max-width: 1100px;
+        margin: 0 auto;
+        padding: 20px;
+      }
+      .hero {
+        display: flex;
+        justify-content: space-between;
+        gap: 12px;
+        align-items: center;
+        margin-bottom: 16px;
+      }
+      h1 {
+        margin: 0;
+        font-size: 1.4rem;
+        letter-spacing: 0.01em;
+      }
+      .status {
+        font-family: 'IBM Plex Mono', monospace;
+        font-size: 12px;
+        padding: 6px 10px;
+        border: 1px solid var(--line);
+        border-radius: 99px;
+        background: var(--paper);
+      }
+      .mini-status-row {
+        display: grid;
+        grid-template-columns: 1fr 1fr;
+        gap: 8px;
+        margin-top: 8px;
+      }
+      .mini-status {
+        font-family: 'IBM Plex Mono', monospace;
+        font-size: 11px;
+        padding: 6px 8px;
+        border: 1px solid var(--line);
+        border-radius: 8px;
+        background: #fff;
+        color: var(--muted);
+        white-space: nowrap;
+        overflow: hidden;
+        text-overflow: ellipsis;
+      }
+      .mini-status.ok {
+        border-color: #0f766e;
+        color: #0f766e;
+      }
+      .mini-status.pending {
+        border-color: #b45309;
+        color: #b45309;
+      }
+      .mini-status.error {
+        border-color: #dc2626;
+        color: #dc2626;
+      }
+      .grid {
+        display: grid;
+        grid-template-columns: minmax(520px, 1.45fr) minmax(360px, 1fr);
+        gap: 14px;
+        align-items: start;
+      }
+      .grid > * {
+        min-width: 0;
+      }
+      .card {
+        border: 1px solid var(--line);
+        border-radius: 14px;
+        background: var(--paper);
+        padding: 12px;
+        box-shadow: 0 8px 25px rgba(21, 34, 56, 0.06);
+        min-width: 0;
+      }
+      .sidebar {
+        display: grid;
+        gap: 14px;
+        position: sticky;
+        top: 10px;
+        max-height: calc(100vh - 20px);
+        overflow-y: auto;
+        padding-right: 2px;
+      }
+      .card h2 {
+        margin: 0 0 8px;
+        font-size: 1rem;
+      }
+      .controls {
+        display: grid;
+        grid-template-columns: repeat(2, minmax(0, 1fr));
+        gap: 8px;
+      }
+      .controls .wide {
+        grid-column: 1 / -1;
+      }
+      label {
+        display: block;
+        margin-bottom: 4px;
+        font-size: 12px;
+        color: var(--muted);
+      }
+      input,
+      textarea,
+      select,
+      button {
+        width: 100%;
+        border: 1px solid var(--line);
+        border-radius: 10px;
+        padding: 9px 10px;
+        font: inherit;
+      }
+      textarea {
+        min-height: 70px;
+        resize: vertical;
+      }
+      button {
+        cursor: pointer;
+        background: #fff;
+      }
+      button.primary {
+        background: var(--accent);
+        border-color: var(--accent);
+        color: #fff;
+        font-weight: 600;
+      }
+      button.warn {
+        background: var(--accent-2);
+        border-color: var(--accent-2);
+        color: #111827;
+        font-weight: 600;
+      }
+      button.danger {
+        background: var(--danger);
+        border-color: var(--danger);
+        color: #fff;
+      }
+      .log {
+        background: #fff;
+        border: 1px dashed var(--line);
+        border-radius: 10px;
+        min-height: 320px;
+        max-height: 420px;
+        overflow: auto;
+        padding: 8px;
+        font-family: 'IBM Plex Mono', monospace;
+        font-size: 12px;
+        line-height: 1.45;
+        white-space: pre-wrap;
+        overflow-wrap: anywhere;
+        word-break: break-word;
+      }
+      .hint {
+        margin-top: 8px;
+        color: var(--muted);
+        font-size: 12px;
+      }
+      @media (max-width: 920px) {
+        .grid {
+          grid-template-columns: 1fr;
+        }
+        .sidebar {
+          position: static;
+          max-height: none;
+          overflow: visible;
+        }
+      }
+    </style>
+  </head>
+  <body>
+    <div class="wrap">
+      <div class="hero">
+        <h1>InterSplit Control Panel</h1>
+        <div id="status" class="status">disconnected</div>
+      </div>
+
+      <div class="grid">
+        <div class="card">
+          <h2>Live Feed</h2>
+          <div id="log" class="log"></div>
+          <div class="hint">Tip: anyone can type <code>!balance</code> in the room if your bot listens for it.</div>
+        </div>
+
+        <div class="sidebar">
+          <div class="hint" style="margin-top:0; margin-bottom:-4px;">
+            Scroll inside this right panel for all sections.
+          </div>
+          <div class="card">
+            <h2>Connection</h2>
+            <div class="controls">
+              <div class="wide">
+                <label for="wsUrl">WebSocket URL</label>
+                <input id="wsUrl" value="ws://127.0.0.1:49222" />
+              </div>
+              <div class="wide">
+                <label for="token">SC-Bridge Token</label>
+                <input id="token" placeholder="required" />
+              </div>
+              <div class="wide">
+                <label for="channel">Channel</label>
+                <input id="channel" value="trip-nyc" />
+              </div>
+              <button id="connectBtn" class="primary">Connect</button>
+              <button id="disconnectBtn">Disconnect</button>
+              <button id="joinBtn">Join</button>
+              <button id="subBtn">Subscribe</button>
+            </div>
+            <div class="mini-status-row">
+              <div id="joinState" class="mini-status">Join: not joined</div>
+              <div id="subState" class="mini-status">Subscribe: inactive</div>
+            </div>
+          </div>
+
+          <div class="card">
+            <h2>Chat</h2>
+            <div class="controls">
+              <div class="wide">
+                <label for="chatText">Message</label>
+                <textarea id="chatText" placeholder="hello team"></textarea>
+              </div>
+              <button id="sendChatBtn" class="primary wide">Send Message</button>
+            </div>
+          </div>
+
+          <div class="card">
+            <h2>Expense Actions</h2>
+            <div class="controls">
+              <div>
+                <label for="payer">Payer</label>
+                <input id="payer" placeholder="alice" />
+              </div>
+              <div>
+                <label for="amount">Amount</label>
+                <input id="amount" placeholder="30" />
+              </div>
+              <div class="wide">
+                <label for="split">Split Members (comma)</label>
+                <input id="split" value="alice,bob" />
+              </div>
+              <div class="wide">
+                <label for="note">Note</label>
+                <input id="note" placeholder="dinner" />
+              </div>
+              <button id="addExpenseBtn" class="primary wide">Add Expense</button>
+              <button id="balanceBtn">Balance</button>
+              <button id="exportBtn">Export Text</button>
+              <button id="persistBtn" class="warn">Persist</button>
+              <button id="restoreBtn">Restore</button>
+              <button id="clearBtn" class="danger">Clear</button>
+            </div>
+          </div>
+
+          <div class="card">
+            <h2>Assistant Input</h2>
+            <div class="controls">
+              <div class="wide">
+                <label for="assistantText">Prompt</label>
+                <input id="assistantText" placeholder='e.g. add alice 30 split alice,bob note dinner' />
+              </div>
+              <button id="assistantBtn" class="primary wide">Run Prompt</button>
+            </div>
+            <div class="hint">
+              Supported: <code>add ...</code>, <code>balance</code>, <code>persist</code>, <code>restore</code>, <code>export [text|json|csv]</code>, <code>send ...</code>.
+            </div>
+            <div class="hint">
+              Note: restore fallback uses local node files in <code>stores/&lt;peer-store-name&gt;</code>, not browser storage.
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <script type="module" src="./ui.js"></script>
+  </body>
+</html>

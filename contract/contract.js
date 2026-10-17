@@ -80,6 +80,31 @@ class SampleContract extends Contract {
                 key : { type : "string", min : 1, max: 256 }
             }
         });
+        this.addSchema('expenseUpsertRoom', {
+            value : {
+                $$strict : true,
+                $$type: "object",
+                op : { type : "string", min : 1, max: 128 },
+                channel : { type : "string", min : 1, max: 128 },
+                snapshot : { type : "any" }
+            }
+        });
+        this.addSchema('expenseDeleteRoom', {
+            value : {
+                $$strict : true,
+                $$type: "object",
+                op : { type : "string", min : 1, max: 128 },
+                channel : { type : "string", min : 1, max: 128 }
+            }
+        });
+        this.addSchema('expenseReadRoom', {
+            value : {
+                $$strict : true,
+                $$type: "object",
+                op : { type : "string", min : 1, max: 128 },
+                channel : { type : "string", min : 1, max: 128 }
+            }
+        });
 
         // now we are registering the timer feature itself (see /features/time/ in package).
         // note the naming convention for the feature name <feature-name>_feature.
@@ -234,6 +259,50 @@ class SampleContract extends Contract {
     async readTimer(){
         const currentTime = await this.get('currentTime');
         console.log('currentTime:', currentTime);
+    }
+
+    _expenseRoomKey(channel){
+        return 'expense/room/' + channel;
+    }
+
+    async expenseUpsertRoom(){
+        const channel = String(this.value?.channel || '').trim().toLowerCase();
+        if(channel.length === 0) return new Error('Channel is required.');
+
+        const snapshot = this.protocol.safeClone(this.value?.snapshot);
+        this.assert(snapshot !== null, new Error('Invalid snapshot payload.'));
+
+        const currentTime = await this.get('currentTime');
+        await this.put(this._expenseRoomKey(channel), {
+            channel,
+            snapshot,
+            updatedAt: currentTime ?? null,
+            updatedBy: this.address ?? null,
+            version: 1
+        });
+    }
+
+    async expenseDeleteRoom(){
+        const channel = String(this.value?.channel || '').trim().toLowerCase();
+        if(channel.length === 0) return new Error('Channel is required.');
+
+        const currentTime = await this.get('currentTime');
+        await this.put(this._expenseRoomKey(channel), {
+            channel,
+            snapshot: null,
+            deletedAt: currentTime ?? null,
+            deletedBy: this.address ?? null,
+            deleted: true,
+            version: 1
+        });
+    }
+
+    async expenseReadRoom(){
+        const channel = String(this.value?.channel || '').trim().toLowerCase();
+        if(channel.length === 0) return new Error('Channel is required.');
+
+        const value = await this.get(this._expenseRoomKey(channel));
+        console.log('expense room', channel, value);
     }
 }
 

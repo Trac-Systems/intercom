@@ -14,6 +14,7 @@ import SampleContract from './contract/contract.js';
 import { Timer } from './features/timer/index.js';
 import Sidechannel from './features/sidechannel/index.js';
 import ScBridge from './features/sc-bridge/index.js';
+import ExpenseSplit from './features/expense-split/index.js';
 
 const getIntercomRuntime = () => {
   const runtime = getPearRuntime();
@@ -535,6 +536,32 @@ if (scBridgeEnabled) {
   });
 }
 
+const expenseSplit = new ExpenseSplit(peer, {
+  defaultChannel: sidechannelEntry,
+  debug: sidechannelDebug,
+  persistencePath: path.join(peerConfig.fullStoresDirectory, 'expense-split.snapshots.json'),
+});
+peer.expenseSplit = expenseSplit;
+
+const onSidechannelMessage = (channel, payload, connection) => {
+  let handledByApp = false;
+  try {
+    handledByApp = expenseSplit.handleSidechannelMessage(channel, payload, connection) === true;
+  } catch (err) {
+    console.error('ExpenseSplit message handler error:', err?.message ?? err);
+  }
+
+  if (scBridgeEnabled && scBridge) {
+    scBridge.handleSidechannelMessage(channel, payload, connection);
+    return;
+  }
+
+  if (sidechannelQuiet || handledByApp) return;
+  const from = payload?.from ?? 'unknown';
+  const msg = payload?.message ?? payload;
+  console.log(`[sidechannel:${channel}] ${from}:`, msg);
+};
+
 const sidechannel = new Sidechannel(peer, {
   channels: [sidechannelEntry, ...sidechannelExtras],
   debug: sidechannelDebug,
@@ -559,13 +586,10 @@ const sidechannel = new Sidechannel(peer, {
   ownerWriteChannels: sidechannelOwnerWriteChannels || undefined,
   ownerKeys: sidechannelOwnerMap.size > 0 ? sidechannelOwnerMap : undefined,
   welcomeByChannel: sidechannelWelcomeMap.size > 0 ? sidechannelWelcomeMap : undefined,
-  onMessage: scBridgeEnabled
-    ? (channel, payload, connection) => scBridge.handleSidechannelMessage(channel, payload, connection)
-    : sidechannelQuiet
-      ? () => {}
-      : null,
+  onMessage: onSidechannelMessage,
 });
 peer.sidechannel = sidechannel;
+expenseSplit.attachSidechannel(sidechannel);
 
 let terminalReadline = null;
 let shutdownStarted = false;
