@@ -85,7 +85,7 @@ test('the real trac-msb orchestrator sends to the three forced validators', asyn
   assert.equal(new Set(sent).size, 3);
 });
 
-test('the peer waits up to ten minutes for the MSB to append a transaction', () => {
+test('the peer waits up to six hours for the MSB to append a transaction and tracks up to 10,000', () => {
   const source = fs.readFileSync(new URL('../index.js', import.meta.url), 'utf8');
-  assert.match(source, /maxTxDelay: 600/);
+  assert.match(source, /maxTxDelay: 6 \* 3600,\n  txPoolMaxSize: 10_000,/);
 });
