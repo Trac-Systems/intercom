@@ -14,6 +14,7 @@ import SampleContract from './contract/contract.js';
 import { Timer } from './features/timer/index.js';
 import Sidechannel from './features/sidechannel/index.js';
 import ScBridge from './features/sc-bridge/index.js';
+import { fanOutValidatorSends } from './features/validator-fanout/index.js';
 
 const getIntercomRuntime = () => {
   const runtime = getPearRuntime();
@@ -445,6 +446,7 @@ await ensureKeypairFile(peerConfig.keyPairPath, walletOptions);
 console.log('=============== STARTING MSB ===============');
 const msb = new MainSettlementBus(msbConfig, msbWallet);
 await msb.ready();
+fanOutValidatorSends(msb.network);
 
 console.log('=============== STARTING PEER ===============');
 const peer = new Peer({
