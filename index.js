@@ -402,6 +402,11 @@ if (subnetBootstrap && subnetBootstrap === msbBootstrapHex) {
 }
 
 const peerConfig = createPeerConfig(PEER_ENV.MAINNET, {
+  // Indexers can hold transactions back for hours while they sign a backlog (3 h seen); with trac-peer's default
+  // 60 s the peer drops a transaction the MSB then appends late, and the contract never applies it. A full pool stops
+  // tracking new transactions, so it grows with the longer wait.
+  maxTxDelay: 6 * 3600,
+  txPoolMaxSize: 10_000,
   storesDirectory: peerStoresDirectory,
   storeName: peerStoreNameRaw,
   bootstrap: subnetBootstrap || null,
