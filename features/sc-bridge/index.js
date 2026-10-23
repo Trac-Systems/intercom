@@ -388,6 +388,7 @@ class ScBridge extends Feature {
           channels,
           connectionCount,
           sidechannelStarted: this.sidechannel.started === true,
+          blindRelay: this.peer.blindRelay?.stats() ?? null,
         });
         return;
       }
@@ -396,7 +397,7 @@ class ScBridge extends Feature {
           sendError('Info not available.');
           return;
         }
-        reply({ type: 'info', info: this.info });
+        reply({ type: 'info', info: { ...this.info, blindRelay: this.peer.blindRelay?.stats() ?? null } });
         return;
       }
       default:

@@ -291,6 +291,11 @@ Sidechannels:
 - **Welcome required:** messages are dropped until a valid owner‑signed welcome is verified (invited or not).  
   **Exception:** `0000intercom` is **name‑only** and does **not** require owner or welcome.
 
+Blind relay (optional, off by default; see [Blind Relay](#blind-relay-optional)):
+- `--blind-relay "<pubkey1,pubkey2>"` (env: `BLIND_RELAY`) : relay peer pubkeys (hex) to use when a direct connection fails.
+- `--blind-relay-serve 0|1` (env: `BLIND_RELAY_SERVE`) : serve as a relay for other peers (**default: 0**).
+- Limits and timeouts (`--blind-relay-max-sessions-per-peer`, `--blind-relay-direct-timeout-ms`, ...) are listed in `features/blind-relay/README.md`.
+
 ### Sidechannel Policy Summary
 - **`0000intercom` (entry):** name‑only, open to all, **no owner / welcome / invite** checks.
 - **Public channels:** require **owner‑signed welcome** by default (unless you disable welcome enforcement).
@@ -634,6 +639,20 @@ If you need invite-only channels to remain reachable even when `maxPeers` limits
   - `--sidechannel-quiet 1` (do not print or react to messages)
   - do **not** enable `--sc-bridge` on relays unless you have a reason
 - Note: a relay that is invited/authorized can still read payloads (see security note above). Quiet mode reduces accidental leakage (logs/UI), not cryptographic visibility.
+
+### Blind Relay (optional)
+Use it when peers cannot reach each other directly, for example two peers behind home routers or mobile networks that
+time out while their sidechannel messages to other peers still arrive. A relay peer forwards the end-to-end encrypted
+connection and cannot read it. Unlike the quiet relay peers above, a blind relay is never a member of your channels.
+- Off unless a flag is given. Do not turn it on by default; turn it on when connections between known peers fail.
+- Relay peer (public address): `--blind-relay-serve 1`. Print its `Peer pubkey (hex)`.
+- Every peer that should use it: `--blind-relay <relay-pubkey-hex>[,<backup-pubkey-hex>]`. Both peers of a connection
+  need the relay on their list; a peer refuses relayed connections through relays it does not list.
+- A peer tries direct for 8 seconds, then each relay for 20 seconds, starting at a random relay.
+- Check it over SC-Bridge: `stats` and `info` include `blindRelay` with the relays, limits and counters
+  (`direct_failures`, `relay_attempts`, `relay_connections`, `pairs_rejected`, ...). Many `relay_attempts` with few
+  `relay_connections` mean the other side does not list the same relay or the relay is unreachable.
+- The relay does not carry the MSB swarm; value transfers keep using the MSB network as before.
 
 ### Full CLI Mirroring (Dynamic)
 SC‑Bridge can execute **every TTY command** via:

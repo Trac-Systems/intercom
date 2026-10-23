@@ -1,6 +1,6 @@
 {
   "name": "contract-test-latest",
-  "version": "0.0.4",
+  "version": "0.0.5",
   "type": "module",
   "main": "index.js",
   "pear": {
@@ -20,12 +20,18 @@
     "trac-msb": "github:Trac-Systems/main_settlement_bus#ea72a9c82a85059c014387cb21f759d2419bed3c",
     "trac-peer": "github:Trac-Systems/trac-peer#2e6f458cb1baa075bc52230c6eb9a3a349d91421",
     "trac-wallet": "1.0.1",
-    "util": "npm:bare-node-util"
+    "util": "npm:bare-node-util",
+    "blind-relay": "1.6.1",
+    "hyperdht": "6.29.6"
   },
   "scripts": {
     "start": "node scripts/pear-runner.mjs",
     "peer": "node scripts/pear-runner.mjs",
     "test": "node --test tests/*.test.mjs",
     "test:pear-runner": "node --test tests/pear-runner.test.mjs"
+  },
+  "overrides": {
+    "blind-relay": "$blind-relay",
+    "hyperdht": "$hyperdht"
   }
 }

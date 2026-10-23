@@ -15,6 +15,8 @@ import { Timer } from './features/timer/index.js';
 import Sidechannel from './features/sidechannel/index.js';
 import ScBridge from './features/sc-bridge/index.js';
 import { fanOutValidatorSends } from './features/validator-fanout/index.js';
+import BlindRelay from './features/blind-relay/index.js';
+import { relayConfigFromFlags } from './features/blind-relay/config.js';
 
 const getIntercomRuntime = () => {
   const runtime = getPearRuntime();
@@ -124,6 +126,14 @@ const parseWelcomeValue = (raw) => {
   } catch (_e) {}
   return null;
 };
+
+// Optional blind relay (off unless --blind-relay or --blind-relay-serve is given): carries encrypted peer traffic
+// through a relay peer when two peers cannot connect directly. See features/blind-relay/README.md.
+const blindRelayConfig = relayConfigFromFlags({
+  ...flags,
+  'blind-relay': flags['blind-relay'] ?? env.BLIND_RELAY ?? [],
+  'blind-relay-serve': flags['blind-relay-serve'] ?? env.BLIND_RELAY_SERVE,
+});
 
 const sidechannelDebugRaw =
   (flags['sidechannel-debug'] && String(flags['sidechannel-debug'])) ||
@@ -463,6 +473,15 @@ const peer = new Peer({
 });
 await peer.ready();
 
+let blindRelay = null;
+if (blindRelayConfig.serve || blindRelayConfig.relays.length) {
+  blindRelay = new BlindRelay(peer, blindRelayConfig);
+  await blindRelay.start();
+  peer.blindRelay = blindRelay;
+  const relayStats = blindRelay.stats();
+  console.log(`Blind relay: serving ${relayStats.serving ? 'on' : 'off'}, relays ${relayStats.configured_relays.length}`);
+}
+
 const effectiveSubnetBootstrapHex = peer.base?.key
   ? peer.base.key.toString('hex')
   : b4a.isBuffer(peer.config.bootstrap)
@@ -591,6 +610,9 @@ const shutdown = async () => {
   } catch (_e) {}
   try {
     await sidechannel.stop?.();
+  } catch (_e) {}
+  try {
+    await blindRelay?.stop?.();
   } catch (_e) {}
   try {
     await peer.close?.();
