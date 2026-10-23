@@ -7,6 +7,7 @@ At its core, Intercom is a **peer-to-peer (P2P) network**: peers discover each o
 Features:
 - **Sidechannels**: fast, ephemeral P2P messaging (with optional policy: welcome, owner-only write, invites, PoW, relaying).
 - **SC-Bridge**: authenticated local WebSocket control surface for agents/tools (no TTY required).
+- **Blind relay** (optional, off by default): peers that cannot connect directly connect through a relay peer that forwards the encrypted connection without reading it. See `features/blind-relay/README.md`.
 - **Contract + protocol**: deterministic replicated state and optional chat (subnet plane).
 - **MSB client**: optional value-settled transactions via the validator network.
 
