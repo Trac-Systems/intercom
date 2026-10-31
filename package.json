@@ -1,6 +1,6 @@
 {
   "name": "contract-test-latest",
-  "version": "0.0.7",
+  "version": "0.0.8",
   "type": "module",
   "main": "index.js",
   "pear": {
@@ -18,7 +18,7 @@
     "protomux": "^3.10.1",
     "hyperschema": "1.17.1",
     "trac-msb": "github:Trac-Systems/main_settlement_bus#23ce0d7fa0e428856bda2c307bfec5cedf3c16f8",
-    "trac-peer": "github:Trac-Systems/trac-peer#25ab03a5851aa600abd26a17775e7bb9b1e7bdd7",
+    "trac-peer": "github:Trac-Systems/trac-peer#4107877948179efd3d18f00e7a300ccd73cfdd07",
     "trac-wallet": "1.0.1",
     "util": "npm:bare-node-util",
     "blind-relay": "1.6.1",
