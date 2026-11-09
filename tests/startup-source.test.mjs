@@ -31,17 +31,30 @@ test('startup awaits sidechannel and owns the service lifetime', () => {
 
 test('intercom depends on pinned trac-peer and patched released trac-msb', () => {
   assert.equal(packageJson.dependencies['hyperschema'], '1.17.1');
-  assert.equal(packageJson.dependencies['trac-peer'], 'github:Trac-Systems/trac-peer#4107877948179efd3d18f00e7a300ccd73cfdd07');
-  assert.equal(packageJson.dependencies['trac-msb'], 'github:Trac-Systems/main_settlement_bus#23ce0d7fa0e428856bda2c307bfec5cedf3c16f8');
+  assert.equal(packageJson.dependencies['trac-peer'], 'github:Trac-Systems/trac-peer#bbac60c7c07f66d4e599d36b4d8dcef860c409b8');
+  assert.equal(packageJson.dependencies['trac-msb'], 'github:Trac-Systems/main_settlement_bus#208c90bd31e53e05762f37e6911e5f98e20774c1');
   assert.equal(packageLock.packages['node_modules/hyperschema'].version, '1.17.1');
   assert.equal(
     packageLock.packages['node_modules/trac-peer'].resolved,
-    'git+ssh://git@github.com/Trac-Systems/trac-peer.git#4107877948179efd3d18f00e7a300ccd73cfdd07'
+    'git+ssh://git@github.com/Trac-Systems/trac-peer.git#bbac60c7c07f66d4e599d36b4d8dcef860c409b8'
   );
   assert.equal(
     packageLock.packages['node_modules/trac-msb'].resolved,
-    'git+ssh://git@github.com/Trac-Systems/main_settlement_bus.git#23ce0d7fa0e428856bda2c307bfec5cedf3c16f8'
+    'git+ssh://git@github.com/Trac-Systems/main_settlement_bus.git#208c90bd31e53e05762f37e6911e5f98e20774c1'
   );
+  // trac-peer must pin the same trac-msb, or npm nests a second copy (see the hyperdht test below)
+  assert.equal(packageLock.packages['node_modules/trac-peer'].dependencies['trac-msb'],
+    'github:Trac-Systems/main_settlement_bus#208c90bd31e53e05762f37e6911e5f98e20774c1');
+});
+
+test('the Hypercore stall fix is applied at install time and re-applied by every root install', () => {
+  // trac-msb and trac-peer patch their Hypercore copies from their own postinstall; npm only runs those when the
+  // package itself is (re)installed, so the root postinstall re-applies them (idempotent) on every npm install/ci.
+  assert.equal(packageLock.packages['node_modules/trac-msb'].hasInstallScript, true);
+  assert.equal(packageLock.packages['node_modules/trac-peer'].hasInstallScript, true);
+  assert.equal(packageLock.packages[''].hasInstallScript, true);
+  assert.match(packageJson.scripts.postinstall, /node_modules\/trac-msb\/scripts\/hypercore-stallfix\/apply\.mjs/);
+  assert.match(packageJson.scripts.postinstall, /node_modules\/trac-peer\/scripts\/hypercore-stallfix\/apply\.mjs/);
 });
 
 test('the tree resolves one hyperdht, at or past the null node-id guard', () => {
