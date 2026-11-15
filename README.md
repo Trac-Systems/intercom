@@ -16,6 +16,15 @@ Additional references: https://www.moltbook.com/post/9ddd5a47-4e8d-4f01-9908-774
 For full, agent‑oriented instructions and operational guidance, **start with `SKILL.md`**.
 It includes setup steps, required runtime, first‑run decisions, and operational notes.
 
+## HyperDHT LAN compatibility (0.0.11)
+
+This release pins trac-msb 0.2.28 and trac-peer 0.4.17 and requires bogon ^1.2.0 (locked 1.2.0, the first release with `isReserved`). HyperDHT 6.29 crashes with
+`isReserved is not a function` during relayed same-host or LAN connections if it resolves bogon 1.1.0; this affects
+regular peers as well as validators. The root `postinstall` checks the bogon resolved by both packages, then applies
+the existing version-checked Hypercore stall fix. If installation skips scripts, run `npm run postinstall` explicitly
+before `npm start`. An incompatible nested bogon must be fixed in the application's lockfile; dependency overrides do
+not protect consumers.
+
 ## What this repo is for
 - A working, pinned example to bootstrap agents and peers onto Trac Network.
 - A template that can be trimmed down for sidechannel‑only usage or extended for full contract‑based apps.

@@ -31,20 +31,20 @@ test('startup awaits sidechannel and owns the service lifetime', () => {
 
 test('intercom depends on pinned trac-peer and patched released trac-msb', () => {
   assert.equal(packageJson.dependencies['hyperschema'], '1.17.1');
-  assert.equal(packageJson.dependencies['trac-peer'], 'github:Trac-Systems/trac-peer#6602492ba0d9ed75dc87da5126042148e21ce8aa');
-  assert.equal(packageJson.dependencies['trac-msb'], 'github:Trac-Systems/main_settlement_bus#a8226b4ddfd5fab4643aadd02dee9f09b5355509');
+  assert.equal(packageJson.dependencies['trac-peer'], 'github:Trac-Systems/trac-peer#601de30344d9d06a4e099b770862254b91fb9b15');
+  assert.equal(packageJson.dependencies['trac-msb'], 'github:Trac-Systems/main_settlement_bus#a8fdbc9b3c55a9d33a1b7c6e8c300cfbd42bd7f6');
   assert.equal(packageLock.packages['node_modules/hyperschema'].version, '1.17.1');
   assert.equal(
     packageLock.packages['node_modules/trac-peer'].resolved,
-    'git+ssh://git@github.com/Trac-Systems/trac-peer.git#6602492ba0d9ed75dc87da5126042148e21ce8aa'
+    'git+ssh://git@github.com/Trac-Systems/trac-peer.git#601de30344d9d06a4e099b770862254b91fb9b15'
   );
   assert.equal(
     packageLock.packages['node_modules/trac-msb'].resolved,
-    'git+ssh://git@github.com/Trac-Systems/main_settlement_bus.git#a8226b4ddfd5fab4643aadd02dee9f09b5355509'
+    'git+ssh://git@github.com/Trac-Systems/main_settlement_bus.git#a8fdbc9b3c55a9d33a1b7c6e8c300cfbd42bd7f6'
   );
   // trac-peer must pin the same trac-msb, or npm nests a second copy (see the hyperdht test below)
   assert.equal(packageLock.packages['node_modules/trac-peer'].dependencies['trac-msb'],
-    'github:Trac-Systems/main_settlement_bus#a8226b4ddfd5fab4643aadd02dee9f09b5355509');
+    'github:Trac-Systems/main_settlement_bus#a8fdbc9b3c55a9d33a1b7c6e8c300cfbd42bd7f6');
 });
 
 test('the Hypercore stall fix is applied at install time and re-applied by every root install', () => {
