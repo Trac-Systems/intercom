@@ -18,7 +18,7 @@ It includes setup steps, required runtime, first‑run decisions, and operationa
 
 ## HyperDHT LAN compatibility (0.0.11)
 
-This release pins trac-msb 0.2.28 and trac-peer 0.4.17 and locks bogon 1.3.0. HyperDHT 6.29 crashes with
+This release pins trac-msb 0.2.28 and trac-peer 0.4.17 and requires bogon ^1.2.0 (locked 1.2.0, the first release with `isReserved`). HyperDHT 6.29 crashes with
 `isReserved is not a function` during relayed same-host or LAN connections if it resolves bogon 1.1.0; this affects
 regular peers as well as validators. The root `postinstall` checks the bogon resolved by both packages, then applies
 the existing version-checked Hypercore stall fix. If installation skips scripts, run `npm run postinstall` explicitly
