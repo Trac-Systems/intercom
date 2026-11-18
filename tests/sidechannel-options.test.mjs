@@ -351,3 +351,76 @@ test('launcher options select only the new feature settings and reject malformed
     assert.throws(() => launcherOptions(value));
   }
 });
+
+test('an application can edit its delivered copy without changing the signed relay', () => {
+  const { sc } = peer(Current, bob, { ...opts({ verifySignature: true }),
+    onMessage(_channel, payload) { payload.message.rows[0] = 'local'; } });
+  const input = port(sc);
+  const relay = port(sc);
+  const original = author._buildPayload('room', { rows: ['wire'] });
+  input.inject(original);
+  const forwarded = frame(relay.sent[0]);
+  assert.deepEqual(forwarded.message, original.message);
+  assert.equal(author._verifySig(forwarded, original.from), true);
+});
+
+test('oversize decoding does not access the JSON buffer', () => {
+  const { sc } = peer(Current, bob, opts({ maxReceiveBytes: 8 }));
+  const codec = port(sc).encoding;
+  let reads = 0;
+  const state = { start: 3, end: 12, get buffer() { reads++; return null; } };
+  assert.equal(codec.decode(state), null);
+  assert.equal(reads, 0);
+  assert.equal(state.start, state.end);
+});
+
+test('bounded mining serializes each canonical field once across decimal nonce widths', async () => {
+  const { mine } = await import('../features/sidechannel/pow.js');
+  const payload = { channel: 'room', from: 'a', origin: 'a', id: 'work', ts: 100, message: 'sample' };
+  const serialized = [];
+  const ok = mine(payload, { powDifficulty: 12 }, value => { serialized.push(value); return JSON.stringify(value); });
+  assert.ok(ok);
+  assert.deepEqual(serialized.sort(), ['sample', 'room', 'a', 'a', 'work', 100].sort());
+  assert.deepEqual(payload.pow, { nonce: 3237, difficulty: 12 });
+  const { sc } = peer(Old, bob, { powEnabled: true, powDifficulty: 12 });
+  assert.equal(sc._checkPow(payload, 'room'), true);
+});
+
+test('requiring signatures also fails a local send when the wallet cannot sign', () => {
+  const { sc } = peer(Current, null, opts({ verifySignature: true }));
+  const outgoing = port(sc);
+  assert.equal(sc.broadcast('room', 'test'), false);
+  assert.equal(outgoing.sent.length, 0);
+});
+
+test('the first runtime policy join opens existing swarm connections for passive reception', async () => {
+  const { sc, delivered } = peer(Current, bob, { channels: [] });
+  let receive;
+  const session = {
+    addMessage({ encoding, onmessage }) {
+      receive = bytes => onmessage(c.decode(encoding, bytes));
+      return { send() {} };
+    },
+    open() {}, fullyOpened: async () => true, close() {}
+  };
+  sc.peer.swarm.connections.push({ remotePublicKey: alice.publicKey, userData: { createChannel: () => session } });
+  await sc.start();
+  assert.equal(await sc.addChannel('passive', { verifySignature: true }), true);
+  assert.equal(typeof receive, 'function');
+  receive(c.encode(c.json, author._buildPayload('passive', 'first')));
+  assert.equal(delivered.length, 1);
+  await sc.stop();
+});
+
+test('an opted-in peer bounds total memberships, including ordinary joins and implicit broadcast joins', async () => {
+  const channels = Array.from({ length: 256 }, (_, i) => 'room-' + i);
+  const config = { channels, channelOptions: { 'room-0': { verifySignature: true } } };
+  const { sc } = peer(Current, bob, config);
+  await sc.start();
+  assert.equal(await sc.addChannel('extra'), false);
+  assert.equal(sc.broadcast('extra', 'hello'), false);
+  assert.equal(await sc.removeChannel('room-1'), true);
+  assert.equal(await sc.addChannel('extra'), true);
+  assert.throws(() => peer(Current, bob, { ...config, channels: [...channels, 'extra'] }));
+  await sc.stop();
+});

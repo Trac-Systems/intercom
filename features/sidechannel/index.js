@@ -16,6 +16,7 @@ const toProtocol = (name) => `sidechannel/${name}`;
 // Upper bound on any single swarm.flush() wait (announce/leave). Degraded
 // networks can leave a flush pending indefinitely; the node must keep running.
 const FLUSH_TIMEOUT_MS = 10_000;
+const HANDSHAKE = Symbol('handshake');
 
 const stableStringify = (value) => {
   if (value === null || value === undefined) return 'null';
@@ -202,7 +203,12 @@ class Sidechannel extends Feature {
     }
 
     const initial = Array.isArray(config.channels) ? config.channels : [];
-    for (const name of initial) this._registerChannel(name);
+    for (const name of initial) {
+      if (this.protectedSeen && this.channels.size >= MAX_CHANNELS && !this.channels.has(normalizeChannel(name))) {
+        throw new RangeError(`At most ${MAX_CHANNELS} joined channels with sidechannel options`);
+      }
+      this._registerChannel(name);
+    }
   }
 
   _now() {
@@ -323,7 +329,8 @@ class Sidechannel extends Feature {
     if (this._attachPow(payload) === false) return null;
     // Message-level signatures allow receivers to enforce "owner-only write" even when
     // messages are relayed (the transport peer can be a relay, not the original sender).
-    this._attachSig(payload);
+    const signed = this._attachSig(payload);
+    if (!signed && this.channelPolicies?.get(channel)?.verifySignature) return null;
     return payload;
   }
 
@@ -549,13 +556,14 @@ class Sidechannel extends Feature {
     this.welcomedChannels.add(normalizeChannel(channel));
   }
 
-  _verifyWelcome(welcome, channel, connection, ownerKey = this._getOwnerKey(channel)) {
+  _verifyWelcome(welcome, channel, connection, overrideKey) {
     if (!welcome || typeof welcome !== 'object') return false;
     const payload = welcome.payload && typeof welcome.payload === 'object' ? welcome.payload : welcome;
     const sigHex = welcome.sig || welcome.signature;
     if (typeof sigHex !== 'string' || sigHex.length === 0) return false;
     const normalized = this._normalizeWelcomePayload(payload);
     if (normalized.channel !== normalizeChannel(channel)) return false;
+    const ownerKey = overrideKey === undefined ? this._getOwnerKey(channel) : overrideKey;
     if (!ownerKey || normalized.ownerPubKey !== ownerKey) return false;
     if (!Number.isFinite(normalized.issuedAt)) return false;
     const message = stableStringify(normalized);
@@ -745,6 +753,8 @@ class Sidechannel extends Feature {
     if (!channel) return null;
     const existing = this.channels.get(channel);
     if (existing && options === undefined) return existing;
+    if (!existing && this.channels.size >= MAX_CHANNELS &&
+        (options !== undefined || this.channelPolicies?.size || this.seenPersistence != null)) return null;
     let policy = this.channelPolicies?.get(channel);
     if (options !== undefined) {
       try {
@@ -760,7 +770,7 @@ class Sidechannel extends Feature {
         return null;
       }
     }
-    if (this.seenPersistence != null && (this.channels.size >= MAX_CHANNELS || b4a.byteLength(channel) > 256)) return null;
+    if (this.seenPersistence != null && b4a.byteLength(channel) > 256) return null;
     if (this._inviteRequired(channel)) {
       const selfKey = normalizeKeyHex(this.peer?.wallet?.publicKey);
       const selfIsInviter = this.inviterKeys && selfKey && this.inviterKeys.has(selfKey);
@@ -866,6 +876,56 @@ class Sidechannel extends Feature {
     return true;
   }
 
+  // false drops the frame, HANDSHAKE completes transport authorization, a
+  // string routes an open request, and null delivers ordinary content.
+  _deliveryAction(payload, entry, connection, ownerChecked) {
+    const control = payload?.message?.control;
+    const requestedChannel = payload?.message?.channel;
+    const isWelcome = this._isWelcomeMessage(payload);
+    const embeddedWelcome = this._extractWelcome(payload);
+    let welcomeOk = false;
+    if (embeddedWelcome) {
+      welcomeOk = this._verifyWelcome(embeddedWelcome, entry.name, connection);
+      if (!welcomeOk && isWelcome) {
+        if (this.debug) {
+          console.log(`[sidechannel:${entry.name}] drop (invalid welcome) from ${this._getRemoteKey(connection)}`);
+        }
+        return false;
+      }
+    } else if (isWelcome) {
+      if (this.debug) {
+        console.log(`[sidechannel:${entry.name}] drop (missing welcome) from ${this._getRemoteKey(connection)}`);
+      }
+      return false;
+    }
+    if (this._welcomeRequired(entry.name) && !this._isWelcomed(entry.name) && !welcomeOk) {
+      if (this.debug) {
+        console.log(`[sidechannel:${entry.name}] drop (awaiting welcome) from ${this._getRemoteKey(connection)}`);
+      }
+      return false;
+    }
+    const openRequest = control === 'open_channel' && this.allowRemoteOpen && typeof requestedChannel === 'string';
+    const target = openRequest && requestedChannel.trim();
+    if (target && !this._allowChannelRequest(target, payload, connection)) return false;
+
+    // Handshakes can establish access but never dispatch content. Legacy
+    // owner-only delivery also retains its second signature check here.
+    const handshake = control === 'auth' || control === 'welcome';
+    if (!ownerChecked && !openRequest && !handshake && this._ownerWriteOnly(entry.name)) {
+      const ownerKey = this._getOwnerKey(entry.name);
+      const author = normalizeKeyHex(payload?.from);
+      if (!ownerKey || !author || author !== ownerKey || !this._verifySig(payload, ownerKey)) {
+        if (this.debug) {
+          console.log(`[sidechannel:${entry.name}] drop (owner-only content) from ${this._getRemoteKey(connection)}`);
+        }
+        return false;
+      }
+    }
+
+    if (handshake) return HANDSHAKE;
+    return openRequest ? target : null;
+  }
+
   _openChannelForConnection(connection, entry) {
     if ((entry.managed || this.channelPolicies?.has(entry.name)) && this.channels.get(entry.name) !== entry) return;
     const mux = connection.userData;
@@ -918,53 +978,11 @@ class Sidechannel extends Feature {
       return;
     }
 
-    const deliver = (payload, acceptedKey) => {
-      const control = payload?.message?.control;
-      const requestedChannel = payload?.message?.channel;
-      const isWelcome = this._isWelcomeMessage(payload);
-      const embeddedWelcome = this._extractWelcome(payload);
-      let welcomeOk = false;
-      if (embeddedWelcome) {
-        welcomeOk = this._verifyWelcome(embeddedWelcome, entry.name, connection);
-        if (!welcomeOk && isWelcome) {
-          if (this.debug) {
-            console.log(`[sidechannel:${entry.name}] drop (invalid welcome) from ${this._getRemoteKey(connection)}`);
-          }
-          return;
-        }
-      } else if (isWelcome) {
-        if (this.debug) {
-          console.log(`[sidechannel:${entry.name}] drop (missing welcome) from ${this._getRemoteKey(connection)}`);
-        }
-        return;
-      }
-      if (this._welcomeRequired(entry.name) && !this._isWelcomed(entry.name) && !welcomeOk) {
-        if (this.debug) {
-          console.log(`[sidechannel:${entry.name}] drop (awaiting welcome) from ${this._getRemoteKey(connection)}`);
-        }
-        return;
-      }
-      const openRequest = control === 'open_channel' && this.allowRemoteOpen && typeof requestedChannel === 'string';
-      const target = openRequest && requestedChannel.trim();
-      if (target && !this._allowChannelRequest(target, payload, connection)) return;
-
-      // Handshakes can establish access but never dispatch content. Legacy
-      // owner-only delivery also retains its second signature check here.
-      const handshake = control === 'auth' || control === 'welcome';
-      if (!acceptedKey && !openRequest && !handshake && this._ownerWriteOnly(entry.name)) {
-        const ownerKey = this._getOwnerKey(entry.name);
-        const author = normalizeKeyHex(payload?.from);
-        if (!ownerKey || !author || author !== ownerKey || !this._verifySig(payload, ownerKey)) {
-          if (this.debug) {
-            console.log(`[sidechannel:${entry.name}] drop (owner-only content) from ${this._getRemoteKey(connection)}`);
-          }
-          return;
-        }
-      }
-
+    const deliver = (payload, action, acceptedKey) => {
       if (acceptedKey) this.protectedSeen.remember(acceptedKey, this._now());
-      if (handshake) return;
-      if (openRequest) {
+      if (action === HANDSHAKE) return;
+      if (typeof action === 'string') {
+        const target = action;
         if (target) {
           if (this.autoJoinOnOpen) {
             this.addChannel(target).catch(() => {});
@@ -974,7 +992,11 @@ class Sidechannel extends Feature {
           }
         }
       } else if (this.onMessage) {
-        this.onMessage(entry.name, payload, connection);
+        // The application owns its delivered copy. Keep the admitted content
+        // for relay even when a callback edits nested objects synchronously.
+        const copy = acceptedKey && this.relayEnabled && payload.ttl > 0
+          ? JSON.parse(JSON.stringify(payload)) : payload;
+        this.onMessage(entry.name, copy, connection);
       } else {
         const from = payload?.from ?? 'unknown';
         const msg = payload?.message ?? payload;
@@ -1047,7 +1069,8 @@ class Sidechannel extends Feature {
         }
         return;
       }
-      deliver(payload, null);
+      const action = this._deliveryAction(payload, entry, connection, false);
+      if (action !== false) deliver(payload, action, null);
     };
 
     const policy = this.channelPolicies?.get(entry.name);
@@ -1062,16 +1085,23 @@ class Sidechannel extends Feature {
         const key = seenKey(payload);
         if (!key || this.protectedSeen.has(key, this._now()) || bytes > limit) return;
         if (!boundedValue(payload)) return;
-        const control = payload.message?.control;
-        const ownerOnly = this._ownerWriteOnly(entry.name) && control !== 'auth' && control !== 'welcome';
-        if (ownerOnly || policy?.verifySignature) {
-          const author = normalizeKeyHex(payload.from);
-          if (ownerOnly && author !== this._getOwnerKey(entry.name)) return;
-          if (!this._validAuthorSignature(payload, author)) return;
+        let action;
+        try {
+          const control = payload.message?.control;
+          const ownerOnly = this._ownerWriteOnly(entry.name) && control !== 'auth' && control !== 'welcome';
+          if (ownerOnly || policy?.verifySignature) {
+            const author = normalizeKeyHex(payload.from);
+            if (ownerOnly && author !== this._getOwnerKey(entry.name)) return;
+            if (!this._validAuthorSignature(payload, author)) return;
+          }
+          if (!this._checkPow(payload, entry.name)) return;
+          if (!this._checkRate(connection, bytes) || !this._checkInvite(payload, entry.name, connection)) return;
+          action = this._deliveryAction(payload, entry, connection, true);
+        } catch {
+          // Legacy invite/welcome normalizers can reject malformed JSON field types.
+          return;
         }
-        if (!this._checkPow(payload, entry.name)) return;
-        if (!this._checkRate(connection, bytes) || !this._checkInvite(payload, entry.name, connection)) return;
-        deliver(payload, key);
+        if (action !== false) deliver(payload, action, key);
       }
     } : { encoding: c.json, onmessage: legacyReceive });
 
@@ -1082,7 +1112,8 @@ class Sidechannel extends Feature {
     channel
       .fullyOpened()
       .then((opened) => {
-        if (entry.managed && (this.channels.get(entry.name) !== entry || perConn.get(entry.name) !== record)) return;
+        if ((entry.managed || this.channelPolicies?.has(entry.name)) &&
+            (this.channels.get(entry.name) !== entry || perConn.get(entry.name) !== record)) return;
         if (this.debug) {
           console.log(
             `[sidechannel:${entry.name}] channel open=${opened} for ${this._getRemoteKey(connection)}`
@@ -1212,6 +1243,13 @@ class Sidechannel extends Feature {
 
     for (const connection of this.connections.keys()) {
       this._openChannelForConnection(connection, entry);
+    }
+    // A passive peer may have established transport connections before it had
+    // any sidechannel, so those connections have no sidechannel records yet.
+    if (entry.managed && this.peer.swarm.connections) {
+      for (const connection of this.peer.swarm.connections) {
+        if (!this.connections.has(connection)) this._openChannelForConnection(connection, entry);
+      }
     }
     return true;
   }
