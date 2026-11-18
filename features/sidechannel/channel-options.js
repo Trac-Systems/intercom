@@ -79,3 +79,33 @@ export function receiveEncoding(limit) {
     }
   };
 }
+
+// Bound recursion before canonicalization. The byte count at the codec is
+// authoritative; this lower bound also stops local oversized inputs early.
+export function boundedValue(value) {
+  let budget = MAX_FRAME_BYTES;
+  function visit(item, depth) {
+    if (depth > 64 || --budget < 0) return false;
+    if (typeof item === 'string') {
+      budget -= item.length;
+      return budget >= 0;
+    }
+    if (!item || typeof item !== 'object') return typeof item !== 'bigint';
+    if (b4a.isBuffer(item)) {
+      budget -= item.length;
+      return budget >= 0;
+    }
+    if (Array.isArray(item)) {
+      if (item.length > budget) return false;
+      for (const child of item) if (!visit(child, depth + 1)) return false;
+    } else {
+      for (const key in item) {
+        if (!Object.hasOwn(item, key)) continue;
+        budget -= key.length;
+        if (!visit(item[key], depth + 1)) return false;
+      }
+    }
+    return true;
+  }
+  return visit(value, 0);
+}

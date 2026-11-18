@@ -3,8 +3,9 @@ import b4a from 'b4a';
 import c from '../../node_modules/compact-encoding/index.js';
 import crypto from 'crypto';
 import PeerWallet from 'trac-wallet';
-import { channelPolicy, receiveEncoding, MAX_CHANNELS, MAX_FRAME_BYTES } from './channel-options.js';
+import { boundedValue, channelPolicy, receiveEncoding, MAX_CHANNELS, MAX_DIFFICULTY, MAX_FRAME_BYTES } from './channel-options.js';
 import { SeenCache, seenKey } from './seen.js';
+import { mine, verifyWork } from './pow.js';
 
 // Join topics must be deterministic and collision-resistant.
 // The previous implementation (alloc(32).fill(name)) could collide for different names.
@@ -318,7 +319,8 @@ class Sidechannel extends Feature {
       ttl: this.relayTtl,
     };
     if (invite) payload.invite = invite;
-    this._attachPow(payload);
+    if ((this.seenPersistence != null || this.channelPolicies?.has(channel)) && !boundedValue(payload)) return null;
+    if (this._attachPow(payload) === false) return null;
     // Message-level signatures allow receivers to enforce "owner-only write" even when
     // messages are relayed (the transport peer can be a relay, not the original sender).
     this._attachSig(payload);
@@ -608,8 +610,25 @@ class Sidechannel extends Feature {
     });
   }
 
+  _boundedPowPolicy(channel) {
+    const policy = this.channelPolicies?.get(channel);
+    if (policy?.powDifficulty !== undefined) return policy;
+    if (!policy && this.seenPersistence == null) return null;
+    return { powDifficulty: this._powRequired(channel) ? this.powDifficulty : 0 };
+  }
+
   _attachPow(payload) {
     const channel = payload?.channel ?? '';
+    const policy = this._boundedPowPolicy(channel);
+    if (policy) {
+      if (policy.powDifficulty > MAX_DIFFICULTY) return false;
+      if (!policy.powDifficulty && !policy.powBitsPerKiB) return true;
+      try {
+        return mine(payload, policy, stableStringify);
+      } catch {
+        return false;
+      }
+    }
     if (!this._powRequired(channel)) return;
     const difficulty = this.powDifficulty;
     let nonce = 0;
@@ -624,6 +643,12 @@ class Sidechannel extends Feature {
   }
 
   _checkPow(payload, channel) {
+    const policy = this._boundedPowPolicy(channel);
+    if (policy) {
+      if (policy.powDifficulty > MAX_DIFFICULTY) return false;
+      if (!policy.powDifficulty && !policy.powBitsPerKiB) return true;
+      return verifyWork(payload, policy, stableStringify);
+    }
     if (!this._powRequired(channel)) return true;
     const pow = payload?.pow;
     if (!pow || typeof pow.nonce !== 'number') return false;
@@ -776,6 +801,7 @@ class Sidechannel extends Feature {
     }
     if (!record?.message) return;
     const payload = this._buildPayload(entry.name, { control: 'welcome', welcome });
+    if (!payload) return;
     this._rememberOutbound(payload);
     record.message.send(payload);
   }
@@ -793,6 +819,7 @@ class Sidechannel extends Feature {
       control: 'auth',
       invite,
     });
+    if (!payload) return;
     this._rememberOutbound(payload);
     record.message.send(payload);
     record.authSent = true;
@@ -1027,6 +1054,7 @@ class Sidechannel extends Feature {
         if (payload?.channel !== entry.name) return;
         const key = seenKey(payload);
         if (!key || this.protectedSeen.has(key, this._now()) || bytes > limit) return;
+        if (!boundedValue(payload)) return;
         const control = payload.message?.control;
         const ownerOnly = this._ownerWriteOnly(entry.name) && control !== 'auth' && control !== 'welcome';
         if (ownerOnly || policy?.verifySignature) {
@@ -1278,6 +1306,7 @@ class Sidechannel extends Feature {
       }
     }
     const payload = this._buildPayload(channel, message, options.invite);
+    if (!payload) return false;
     let payloadJson = null;
     try {
       payloadJson = JSON.stringify(payload);
