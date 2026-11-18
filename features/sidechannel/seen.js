@@ -19,6 +19,7 @@ export function seenKey(payload) {
   let author = '';
   if (typeof from === 'string' && from.length <= 128) author = from.trim().toLowerCase();
   else if (from?.type === 'Buffer' && Array.isArray(from.data) && from.data.length === 32) {
+    if (!from.data.every(byte => Number.isInteger(byte) && byte >= 0 && byte <= 255)) return null;
     author = b4a.toString(b4a.from(from.data), 'hex');
   } else if (from != null) return null;
   const control = payload.message?.control;
@@ -47,7 +48,10 @@ function readRange(file, offset, length) {
 class HourFiles {
   constructor(config) {
     if (typeof config?.directory !== 'string' || !config.directory.trim()) throw new TypeError('Expected seenPersistence.directory');
-    this.directory = config.directory;
+    for (const key of Object.keys(config)) {
+      if (!['directory', 'hours', 'maxFileBytes'].includes(key)) throw new TypeError(`Unknown seenPersistence option: ${key}`);
+    }
+    this.directory = path.resolve(config.directory);
     this.hours = integer(config.hours ?? 3, 'hours', 1, 24);
     const bytes = integer(config.maxFileBytes ?? 65_536, 'maxFileBytes', HASH_BYTES, 262_144);
     this.capacity = Math.floor(bytes / HASH_BYTES) * HASH_BYTES;
@@ -66,8 +70,13 @@ class HourFiles {
       let entries = 0;
       for (let entry; (entry = dir.readSync());) {
         if (++entries > 64) throw new Error('Use a dedicated seenPersistence directory');
-        const match = /^seen-(\d{1,12})\.bin$/.exec(entry.name);
-        if (!match || !entry.isFile()) continue;
+        if (entry.name === 'seen-compact.tmp') {
+          fs.unlinkSync(path.join(this.directory, entry.name));
+          continue;
+        }
+        const match = /^seen-(0|[1-9]\d{0,11})\.bin$/.exec(entry.name);
+        if (!match) continue;
+        if (!entry.isFile()) throw new Error(`Expected a regular file: ${entry.name}`);
         const n = Number(match[1]);
         if (n < oldest || n > hour) fs.unlinkSync(this.file(n));
         else files.push(n);
@@ -78,7 +87,7 @@ class HourFiles {
 
     ids.clear();
     this.bytes = 0;
-    // Read newest tails first so startup never reads more than maxIds records.
+    // Load at most maxIds hashes, starting with the newest file tails.
     const recent = [];
     let remaining = maxIds;
     for (const n of files.sort((a, b) => b - a)) {
@@ -108,7 +117,7 @@ class HourFiles {
 
   replace(file, data) {
     const temp = path.join(this.directory, 'seen-compact.tmp');
-    fs.writeFileSync(temp, data, { mode: 0o600 });
+    fs.writeFileSync(temp, data, { mode: 0o600, flag: 'wx' });
     fs.renameSync(temp, file);
   }
 
@@ -121,8 +130,23 @@ class HourFiles {
       this.replace(file, b4a.concat([tail, hash]));
       this.bytes = keep + HASH_BYTES;
     } else {
-      fs.appendFileSync(file, hash, { mode: 0o600 });
-      this.bytes += HASH_BYTES;
+      // Positional writes keep the hard cap even after a partial write. Open
+      // new files exclusively and detect a changed file before writing.
+      let fd;
+      try {
+        fd = fs.openSync(file, 'r+');
+      } catch (error) {
+        if (error.code !== 'ENOENT') throw error;
+        fd = fs.openSync(file, 'wx', 0o600);
+      }
+      try {
+        if (fs.fstatSync(fd).size !== this.bytes) throw new Error('Seen file changed; use a directory per peer');
+        const written = fs.writeSync(fd, hash, 0, HASH_BYTES, this.bytes);
+        if (written !== HASH_BYTES) throw new Error('Incomplete seen record');
+        this.bytes += written;
+      } finally {
+        fs.closeSync(fd);
+      }
     }
   }
 }
@@ -146,6 +170,11 @@ export class SeenCache {
     }
   }
 
+  reset() {
+    this.ids.clear();
+    if (this.files) this.files.hour = null;
+  }
+
   has(key, now) {
     this.prepare(now);
     return this.ids.has(key);
@@ -153,7 +182,14 @@ export class SeenCache {
 
   remember(key, now) {
     if (!key || !this.limit || this.has(key, now)) return;
-    this.files?.append(key);
+    if (this.files) {
+      try {
+        this.files.append(key);
+      } catch (error) {
+        this.files.hour = null; // Re-scan and recover any partial append on retry.
+        throw error;
+      }
+    }
     this.ids.set(key, now);
     if (this.ids.size > this.limit) this.ids.delete(this.ids.keys().next().value);
   }

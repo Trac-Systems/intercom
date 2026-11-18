@@ -312,3 +312,28 @@ test('recent IDs loaded from multiple hours obey maxSeen and recover a partial t
   assert.equal(delivered.length, 1);
   await sc.stop();
 });
+
+test('hour files recover an interrupted compaction and a smaller configured capacity on restart', async t => {
+  const directory = fs.mkdtempSync(path.join(process.cwd(), '.seen-test-'));
+  t.after(() => fs.rmSync(directory, { force: true, recursive: true }));
+  const config = { seenPersistence: { directory, maxFileBytes: 128 } };
+  const first = peer(Current, bob, config).sc;
+  await first.start();
+  const incoming = port(first);
+  const payloads = Array.from({ length: 4 }, (_, i) => author._buildPayload('room', i));
+  for (const p of payloads) incoming.inject(p);
+  await first.stop();
+  fs.writeFileSync(path.join(directory, 'seen-compact.tmp'), Buffer.alloc(19));
+  const { sc, delivered } = peer(Current, bob, { seenPersistence: { directory, maxFileBytes: 64 } });
+  await sc.start();
+  const reopened = port(sc);
+  reopened.inject(payloads[2]);
+  reopened.inject(payloads[3]);
+  assert.equal(delivered.length, 0);
+  reopened.inject(payloads[0]);
+  assert.equal(delivered.length, 1);
+  const files = fs.readdirSync(directory);
+  assert.equal(files.length, 1);
+  assert.equal(fs.statSync(path.join(directory, files[0])).size, 64);
+  await sc.stop();
+});

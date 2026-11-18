@@ -733,7 +733,11 @@ class Sidechannel extends Feature {
     const sig = payload?.sig || payload?.signature;
     if (typeof author !== 'string' || !/^[0-9a-f]{64}$/.test(author)) return false;
     if (typeof sig !== 'string' || !/^[0-9a-f]{128}$/i.test(sig)) return false;
-    return this._verifySig(payload, author);
+    try {
+      return this._verifySig(payload, author);
+    } catch {
+      return false;
+    }
   }
 
   _registerChannel(name, options) {
@@ -1486,6 +1490,7 @@ class Sidechannel extends Feature {
     this.started = false;
     this._dhtBootPromise = null;
     this.connections.clear();
+    if (this.seenPersistence != null) this.protectedSeen.reset();
     // Nothing is on the swarm any more: drop announced state (a later start()
     // re-announces from scratch) and release pending waiters with a truthful
     // "not joined" instead of leaving them hanging.
