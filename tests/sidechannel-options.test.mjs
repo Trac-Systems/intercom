@@ -451,3 +451,26 @@ test('effective PoW caps at 16 bits and an exhausted mining budget leaves no par
   assert.equal(sc.broadcast('room', 'over inherited work bound'), false);
   assert.equal(outgoing.sent.length, 0);
 });
+
+test('persistent startup loads the newest 20,000 hashes even with a larger legacy maxSeen', async t => {
+  const directory = fs.mkdtempSync(path.join(process.cwd(), '.seen-test-'));
+  t.after(() => fs.rmSync(directory, { force: true, recursive: true }));
+  // Each fixture record is a distinct 32-byte digest-sized value.
+  function record(i) {
+    const hash = Buffer.alloc(32);
+    hash.writeUInt32BE(i, 0);
+    return hash;
+  }
+  for (let hour = 1; hour <= 3; hour++) {
+    const data = Buffer.alloc(7000 * 32);
+    for (let i = 0; i < 7000; i++) record((hour - 1) * 7000 + i).copy(data, i * 32);
+    fs.writeFileSync(path.join(directory, 'seen-' + hour + '.bin'), data);
+  }
+  const { sc } = peer(Current, bob, { maxSeen: 100_000, seenPersistence: { directory, hours: 3, maxFileBytes: 262_144 } });
+  sc._now = () => 3 * 3_600_000;
+  await sc.start();
+  assert.equal(sc.protectedSeen.ids.size, 20_000);
+  assert.equal(sc.protectedSeen.has(record(999).toString('hex'), sc._now()), false);
+  assert.equal(sc.protectedSeen.has(record(1000).toString('hex'), sc._now()), true);
+  await sc.stop();
+});
