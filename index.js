@@ -13,6 +13,7 @@ import SampleProtocol from './contract/protocol.js';
 import SampleContract from './contract/contract.js';
 import { Timer } from './features/timer/index.js';
 import Sidechannel from './features/sidechannel/index.js';
+import { launcherOptions } from './features/sidechannel/channel-options.js';
 import ScBridge from './features/sc-bridge/index.js';
 import { fanOutValidatorSends } from './features/validator-fanout/index.js';
 import BlindRelay from './features/blind-relay/index.js';
@@ -135,6 +136,7 @@ const blindRelayConfig = relayConfigFromFlags({
   'blind-relay-serve': flags['blind-relay-serve'] ?? env.BLIND_RELAY_SERVE,
 });
 
+const extraSidechannelOptions = launcherOptions(flags['sidechannel-options'] ?? env.SIDECHANNEL_OPTIONS);
 const sidechannelDebugRaw =
   (flags['sidechannel-debug'] && String(flags['sidechannel-debug'])) ||
   env.SIDECHANNEL_DEBUG ||
@@ -562,6 +564,7 @@ if (scBridgeEnabled) {
 }
 
 const sidechannel = new Sidechannel(peer, {
+  ...extraSidechannelOptions,
   channels: [sidechannelEntry, ...sidechannelExtras],
   debug: sidechannelDebug,
   maxMessageBytes: Number.isSafeInteger(sidechannelMaxBytes) ? sidechannelMaxBytes : undefined,

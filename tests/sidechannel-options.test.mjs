@@ -337,3 +337,17 @@ test('hour files recover an interrupted compaction and a smaller configured capa
   assert.equal(fs.statSync(path.join(directory, files[0])).size, 64);
   await sc.stop();
 });
+
+test('launcher options select only the new feature settings and reject malformed configuration', async () => {
+  const { launcherOptions } = await import('../features/sidechannel/channel-options.js');
+  assert.deepEqual(launcherOptions(undefined), {});
+  const config = opts({ verifySignature: true });
+  assert.deepEqual(launcherOptions(JSON.stringify(config)), config);
+  const { sc, delivered } = peer(Current, bob, launcherOptions(JSON.stringify(config)));
+  const incoming = port(sc);
+  incoming.inject({ id: 'without-signature', channel: 'room', message: 'test' });
+  assert.equal(delivered.length, 0);
+  for (const value of ['[1]', 'null', 'invalid', '{"channelOption":{}}', ' '.repeat(1_048_577)]) {
+    assert.throws(() => launcherOptions(value));
+  }
+});

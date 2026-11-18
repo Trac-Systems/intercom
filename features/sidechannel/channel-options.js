@@ -109,3 +109,16 @@ export function boundedValue(value) {
   }
   return visit(value, 0);
 }
+
+export function launcherOptions(raw) {
+  if (raw === undefined || raw === '') return {};
+  if (typeof raw !== 'string' || raw.length > MAX_FRAME_BYTES || b4a.byteLength(raw) > MAX_FRAME_BYTES) {
+    throw new TypeError('sidechannel-options expects at most 1 MiB of JSON');
+  }
+  const config = JSON.parse(raw);
+  if (!config || typeof config !== 'object' || Array.isArray(config)) throw new TypeError('Expected sidechannel-options object');
+  for (const key of Object.keys(config)) {
+    if (key !== 'channelOptions' && key !== 'seenPersistence') throw new TypeError(`Unknown sidechannel-options key: ${key}`);
+  }
+  return config;
+}
