@@ -296,6 +296,25 @@ Blind relay (optional, off by default; see [Blind Relay](#blind-relay-optional))
 - `--blind-relay-serve 0|1` (env: `BLIND_RELAY_SERVE`) : serve as a relay for other peers (**default: 0**).
 - Limits and timeouts (`--blind-relay-max-sessions-per-peer`, `--blind-relay-direct-timeout-ms`, ...) are listed in `features/blind-relay/README.md`.
 
+### Opt-in sidechannel settings
+
+Supply `--sidechannel-options` or `SIDECHANNEL_OPTIONS` as a JSON object. For example, with `--sidechannels quotes`, this config selects signed quotes up to 32 KiB and keeps a local replay cache.
+
+```json
+{
+  "channelOptions": {
+    "quotes": { "verifySignature": true, "maxReceiveBytes": 32768, "powDifficulty": 8, "powBitsPerKiB": 1, "welcomeRequired": false }
+  },
+  "seenPersistence": { "directory": "./stores/peer/seen", "hours": 3, "maxFileBytes": 65536 }
+}
+```
+
+- All additions default to off. `verifySignature` requires a valid envelope signature from `from`. `maxReceiveBytes` limits raw compact JSON bytes including the length prefix before parsing. Configured channels have a 1 MiB hard ceiling.
+- `powDifficulty` overrides global PoW on this channel. `0` disables fixed work. Optional `powBitsPerKiB` adds bits for each started KiB after the first 1,024 bytes of canonical message JSON. Total difficulty is capped at 16. A bounded mining attempt can make `broadcast` return `false`.
+- `seenPersistence` enables the bounded receive path across all joined channels. Give each running peer its own directory. It retains hourly files of scoped ID hashes, with at most 24 hours, 256 KiB per file and `min(maxSeen, 20000)` hashes loaded. Rejected frames never reserve IDs.
+- SC-Bridge joins use the host's configured policy. In an embedding app, `await sc.addChannel(name, { ownerKey, ownerWriteOnly: true, welcomeRequired: true, welcome, verifySignature: true })` installs policy before announcing. `welcome` is the owner's signed welcome object. The runtime API also accepts both PoW fields and the byte limit. Leave with `await sc.removeChannel(name)` before replacing a policy. An opted-in peer supports up to 256 policies and 256 joined channels.
+- Embedding apps can call `sc.rebroadcast(payload)` with a stored signed `onMessage` envelope. It renews the relay TTL, preserves the ID, signature, PoW and content, and returns `true` when sent to an authorized open session. Receivers suppress remembered IDs.
+
 ### Sidechannel Policy Summary
 - **`0000intercom` (entry):** name‑only, open to all, **no owner / welcome / invite** checks.
 - **Public channels:** require **owner‑signed welcome** by default (unless you disable welcome enforcement).

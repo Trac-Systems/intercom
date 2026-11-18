@@ -97,6 +97,35 @@ Intercom is a single long-running Pear process that participates in three distin
   - `SIDECHANNEL_MAX_STRIKES`
 - Set `--sidechannel-rate-bytes 0` (or `SIDECHANNEL_RATE_BYTES=0`) to disable the limiter entirely on that peer.
 
+### Opt-in channel policies
+
+The feature accepts `channelOptions` and `seenPersistence`. Both default to off. The launcher accepts the same two keys as JSON through `--sidechannel-options` or `SIDECHANNEL_OPTIONS`. Select startup channels separately with `channels` or `--sidechannels`.
+
+```js
+const sc = new Sidechannel(peer, {
+  channels: ['quotes'],
+  channelOptions: {
+    quotes: {
+      verifySignature: true, maxReceiveBytes: 32_768,
+      powDifficulty: 8, powBitsPerKiB: 1, welcomeRequired: false
+    }
+  },
+  seenPersistence: { directory: './stores/peer/seen', hours: 3, maxFileBytes: 65_536 }
+});
+await sc.start();
+```
+
+| Setting | Behavior when selected |
+| --- | --- |
+| `verifySignature` | Verify every envelope against its signed `from` key on this channel. Rejected frames never reach the app or a relay. |
+| `maxReceiveBytes` | Count the raw compact JSON frame, including its length prefix. Drop frames over the limit before JSON parsing. A configured channel has a hard ceiling of 1 MiB. The existing sender limit is separate. |
+| `powDifficulty`, `powBitsPerKiB` | Override the channel's global PoW selection. The first 1,024 bytes of canonical UTF-8 message JSON use the base difficulty. Each additional started KiB adds the configured bits (default 0), up to 16 total. Omitting the base inherits the existing PoW setting. The v1 hash and wire fields stay the same. Mining stops after at most 1,048,576 trials or a 256 MiB hash budget and returns a send failure on exhaustion. |
+| `seenPersistence` | Use a private directory dedicated to one running peer. Store only 32-byte hashes of accepted IDs and their scope. Retain the current UTC hour and recent hours (3 total by default, up to 24). Hour files default to 64 KiB and can grow to 256 KiB. When full, a file keeps its newer half before appending. Startup loads the newest hashes up to `maxSeen` (hard limit 20,000). |
+
+`await sc.addChannel(name, options)` accepts the same per-channel fields, plus `ownerKey`, `ownerWriteOnly`, `welcomeRequired` and a signed `welcome`. For example, `await sc.addChannel('bulletin', { ownerKey, ownerWriteOnly: true, welcomeRequired: true, welcome })` joins with the supplied owner's signed welcome. Omitted owner and welcome settings inherit the existing configuration. Use `await sc.removeChannel(name)` before changing a live policy. A later join inherits its startup policy. Opted-in peers support up to 256 configured policies and 256 joined channels. Persistence applies the bounded receive path to every joined channel.
+
+Call `sc.rebroadcast(savedPayload)` with the original signed envelope from `onMessage`. It verifies the signature, owner and required work, sends a copy with a fresh local relay TTL to authorized open sessions, and returns whether it sent one. Auth and welcome handshakes are excluded. Receivers ignore IDs they still remember.
+
 ## Sample Timer
 - The sample timer feature writes periodic contract entries and is disabled by default.
 - Enable it only when explicitly testing the sample contract timer path:
