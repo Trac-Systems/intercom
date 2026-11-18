@@ -1281,6 +1281,45 @@ class Sidechannel extends Feature {
     return true;
   }
 
+  rebroadcast(payload) {
+    const channel = payload?.channel;
+    if (typeof channel !== 'string' || !this.channels.has(channel)) return false;
+    let envelope;
+    try {
+      if (!boundedValue(payload)) return false;
+      // Snapshot the actual wire representation. Only TTL is renewed, and
+      // neither the original caller's object nor its nested content is mutated.
+      const json = JSON.stringify({ ...payload, ttl: this.relayTtl });
+      const bytes = b4a.byteLength(json);
+      const size = { end: bytes };
+      c.uint.preencode(size, bytes);
+      if (bytes > this.maxMessageBytes || size.end > MAX_FRAME_BYTES) return false;
+      envelope = JSON.parse(json);
+      if (envelope.channel !== channel || !seenKey(envelope) || !boundedValue(envelope)) return false;
+      const control = envelope.message?.control;
+      if (control === 'auth' || control === 'welcome') return false;
+      const author = normalizeKeyHex(envelope.from);
+      if (this._ownerWriteOnly(channel) && author !== this._getOwnerKey(channel)) return false;
+      if (!this._validAuthorSignature(envelope, author) || !this._checkPow(envelope, channel)) return false;
+    } catch {
+      return false;
+    }
+
+    if (this._inviteRequired(channel)) {
+      const self = normalizeKeyHex(this.peer?.wallet?.publicKey);
+      if (!this.inviterKeys?.has(self) && !this._isLocallyInvited(channel)) return false;
+    }
+    let sent = false;
+    for (const [connection, perConn] of this.connections) {
+      const record = perConn.get(channel);
+      if (!record?.channel.opened || !this._remoteAuthorized(channel, connection)) continue;
+      if (!sent) this._rememberOutbound(envelope);
+      record.message.send(envelope);
+      sent = true;
+    }
+    return sent;
+  }
+
   broadcast(name, message, options = {}) {
     const channel = String(name || '').trim();
     if (!channel) return false;
