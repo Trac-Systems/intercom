@@ -1,0 +1,81 @@
+import b4a from 'b4a';
+import c from '../../node_modules/compact-encoding/index.js';
+
+export const MAX_CHANNELS = 256;
+export const MAX_FRAME_BYTES = 1_048_576;
+export const MAX_DIFFICULTY = 16;
+const keys = new Set([
+  'verifySignature', 'maxReceiveBytes', 'powDifficulty', 'powBitsPerKiB',
+  'ownerKey', 'ownerWriteOnly', 'welcomeRequired', 'welcome'
+]);
+
+export function integer(value, name, min, max) {
+  if (!Number.isSafeInteger(value) || value < min || value > max) {
+    throw new RangeError(`${name} must be an integer between ${min} and ${max}`);
+  }
+  return value;
+}
+
+export function channelPolicy(name, options) {
+  if (!name || b4a.byteLength(name) > 256) throw new RangeError('Channel name must fit in 256 bytes');
+  if (!options || typeof options !== 'object' || Array.isArray(options)) throw new TypeError('Expected channel options');
+  const policy = {};
+  for (const key of Object.keys(options)) {
+    if (!keys.has(key)) throw new TypeError(`Unknown channel option: ${key}`);
+    const value = options[key];
+    switch (key) {
+      case 'verifySignature':
+      case 'ownerWriteOnly':
+      case 'welcomeRequired':
+        if (typeof value !== 'boolean') throw new TypeError(`${key} must be boolean`);
+        policy[key] = value;
+        break;
+      case 'maxReceiveBytes':
+        policy[key] = integer(value, key, 1, MAX_FRAME_BYTES);
+        break;
+      case 'powDifficulty':
+      case 'powBitsPerKiB':
+        policy[key] = integer(value, key, 0, MAX_DIFFICULTY);
+        break;
+      case 'ownerKey': {
+        const hex = b4a.isBuffer(value) ? b4a.toString(value, 'hex') : value;
+        if (typeof hex !== 'string' || !/^[a-f0-9]{64}$/i.test(hex)) throw new TypeError('Invalid ownerKey');
+        policy.ownerKey = hex.toLowerCase();
+        break;
+      }
+      case 'welcome': {
+        const json = JSON.stringify(value);
+        if (!json || b4a.byteLength(json) > MAX_FRAME_BYTES) throw new RangeError('Invalid welcome size');
+        policy.welcome = JSON.parse(json);
+        break;
+      }
+    }
+  }
+  if (policy.powBitsPerKiB !== undefined && policy.powDifficulty === undefined) {
+    throw new TypeError('powBitsPerKiB requires powDifficulty');
+  }
+  return policy;
+}
+
+// Protomux supplies the end of this individual message, including in a batch.
+// The v1 ID is inside the JSON. Avoid even parsing it above the frame ceiling.
+export function receiveEncoding(limit) {
+  return {
+    preencode: c.json.preencode,
+    encode: c.json.encode,
+    decode(state) {
+      const bytes = state.end - state.start;
+      if (bytes > limit) {
+        state.start = state.end;
+        return null;
+      }
+      try {
+        const payload = c.json.decode(state);
+        if (state.start !== state.end) return null;
+        return { bytes, payload };
+      } catch {
+        return null;
+      }
+    }
+  };
+}
