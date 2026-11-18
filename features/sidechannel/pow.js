@@ -19,8 +19,8 @@ function input(payload, policy, stringify) {
   return { bits, prefix, suffix };
 }
 
-function sufficient(digest, bits) {
-  return digest[0] * 256 + digest[1] < 2 ** (16 - bits);
+function sufficient(digest, target) {
+  return digest[0] * 256 + digest[1] < target;
 }
 
 export function mine(payload, policy, stringify) {
@@ -32,6 +32,7 @@ export function mine(payload, policy, stringify) {
   const { prefix, suffix, bits } = base;
   if (!bits) return true;
 
+  const target = 2 ** (16 - bits);
   const template = crypto.createHash('sha256');
   const reusable = typeof template.copy === 'function' ? template.update(prefix) : null;
   const digits = b4a.allocUnsafe(String(MAX_TRIES - 1).length);
@@ -48,7 +49,7 @@ export function mine(payload, policy, stringify) {
     } while (n);
     const hash = reusable ? reusable.copy() : crypto.createHash('sha256').update(prefix);
     const digest = hash.update(digits.subarray(offset)).update(suffix).digest();
-    if (sufficient(digest, bits)) {
+    if (sufficient(digest, target)) {
       payload.pow = { nonce, difficulty: bits };
       return true;
     }
@@ -57,11 +58,13 @@ export function mine(payload, policy, stringify) {
 }
 
 export function verifyWork(payload, policy, stringify) {
+  const nonce = payload.pow?.nonce;
+  const validNonce = Number.isSafeInteger(nonce) && nonce >= 0;
+  if (policy.powDifficulty && !validNonce) return false;
   const base = input(payload, policy, stringify);
   if (!base) return false;
   if (!base.bits) return true;
-  const nonce = payload.pow?.nonce;
-  if (!Number.isSafeInteger(nonce) || nonce < 0) return false;
+  if (!validNonce) return false;
   const hash = crypto.createHash('sha256').update(base.prefix).update(String(nonce)).update(base.suffix);
-  return sufficient(hash.digest(), base.bits);
+  return sufficient(hash.digest(), 2 ** (16 - base.bits));
 }

@@ -156,6 +156,8 @@ test('bounded persistent hashes survive restart, rotate by hour and exclude reje
 test('rebroadcast preserves a signed envelope, resets TTL and respects receivers’ seen lists', () => {
   const { sc: sender } = peer(Current, bob, { relayTtl: 4 });
   const { sc, delivered } = peer(Current, bob, opts({ verifySignature: true }));
+  let now = 10_000;
+  sc._now = () => now;
   const outgoing = port(sender);
   outgoing.destination = port(sc);
   const relay = port(sc);
@@ -171,6 +173,9 @@ test('rebroadcast preserves a signed envelope, resets TTL and respects receivers
   assert.equal(sender.rebroadcast(author._buildPayload('room', { control: 'auth' })), false);
   assert.equal(sender.rebroadcast(author._buildPayload('unknown', 'content')), false);
   assert.equal(outgoing.sent.length, 2);
+  now += 120_001;
+  assert.equal(sender.rebroadcast(existing), true);
+  assert.deepEqual([delivered.length, relay.sent.length], [2, 2]);
 });
 
 test('runtime join installs owner, welcome, size, signature and PoW before opening and forgets options on leave', async () => {
@@ -318,6 +323,7 @@ test('hour files recover an interrupted compaction and a smaller configured capa
   t.after(() => fs.rmSync(directory, { force: true, recursive: true }));
   const config = { seenPersistence: { directory, maxFileBytes: 128 } };
   const first = peer(Current, bob, config).sc;
+  first._now = () => 1_700_000_000_000;
   await first.start();
   const incoming = port(first);
   const payloads = Array.from({ length: 4 }, (_, i) => author._buildPayload('room', i));
@@ -325,6 +331,7 @@ test('hour files recover an interrupted compaction and a smaller configured capa
   await first.stop();
   fs.writeFileSync(path.join(directory, 'seen-compact.tmp'), Buffer.alloc(19));
   const { sc, delivered } = peer(Current, bob, { seenPersistence: { directory, maxFileBytes: 64 } });
+  sc._now = first._now;
   await sc.start();
   const reopened = port(sc);
   reopened.inject(payloads[2]);
@@ -423,4 +430,24 @@ test('an opted-in peer bounds total memberships, including ordinary joins and im
   assert.equal(await sc.addChannel('extra'), true);
   assert.throws(() => peer(Current, bob, { ...config, channels: [...channels, 'extra'] }));
   await sc.stop();
+});
+
+test('effective PoW caps at 16 bits and an exhausted mining budget leaves no partial proof', async () => {
+  const { mine } = await import('../features/sidechannel/pow.js');
+  const payload = { id: 'work-cap', channel: 'room', from: 'a', origin: 'a', ts: 100, message: 'x'.repeat(1024) };
+  assert.equal(mine(payload, { powDifficulty: 15, powBitsPerKiB: 16 }, JSON.stringify), true);
+  assert.equal(payload.pow.difficulty, 16);
+  const reference = peer(Old, bob, { powEnabled: true, powDifficulty: 16 }).sc;
+  assert.ok(reference._checkPow(payload, 'room'));
+
+  // A long immutable suffix still has to be hashed per nonce, even on Node.
+  // This fixed vector has no acceptable nonce within the 256 MiB hash budget.
+  const limited = { id: 'budget', channel: 'room', from: 'a', origin: 'x'.repeat(700000), message: 'sample', ts: 100 };
+  assert.equal(mine(limited, { powDifficulty: 16 }, JSON.stringify), false);
+  assert.equal(limited.pow, undefined);
+
+  const { sc } = peer(Current, bob, { ...opts({ verifySignature: true }), powEnabled: true, powDifficulty: 17 });
+  const outgoing = port(sc);
+  assert.equal(sc.broadcast('room', 'over inherited work bound'), false);
+  assert.equal(outgoing.sent.length, 0);
 });

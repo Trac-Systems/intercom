@@ -44,6 +44,7 @@ export function channelPolicy(name, options) {
         break;
       }
       case 'welcome': {
+        if (!boundedValue(value)) throw new RangeError('Invalid welcome size or nesting');
         const json = JSON.stringify(value);
         if (!json || b4a.byteLength(json) > MAX_FRAME_BYTES) throw new RangeError('Invalid welcome size');
         policy.welcome = JSON.parse(json);
@@ -54,7 +55,8 @@ export function channelPolicy(name, options) {
   if (policy.powBitsPerKiB !== undefined && policy.powDifficulty === undefined) {
     throw new TypeError('powBitsPerKiB requires powDifficulty');
   }
-  return policy;
+  if (policy.verifySignature === false) delete policy.verifySignature;
+  return Object.keys(policy).length ? policy : null;
 }
 
 // Protomux supplies the end of this individual message, including in a batch.
@@ -70,9 +72,9 @@ export function receiveEncoding(limit) {
         return null;
       }
       try {
-        const payload = c.json.decode(state);
+        const json = c.string.decode(state);
         if (state.start !== state.end) return null;
-        return { bytes, payload };
+        return { bytes, json, payload: JSON.parse(json) };
       } catch {
         return null;
       }

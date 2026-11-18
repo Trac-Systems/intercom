@@ -156,11 +156,12 @@ class Sidechannel extends Feature {
         if (this.startupPolicies.has(channel) || this.startupPolicies.size >= MAX_CHANNELS) {
           throw new RangeError('Duplicate channel policy or too many channels');
         }
-        this.startupPolicies.set(channel, channelPolicy(channel, value));
+        const policy = channelPolicy(channel, value);
+        if (policy) this.startupPolicies.set(channel, policy);
       }
       if (this.startupPolicies.size) this.channelPolicies = new Map(this.startupPolicies);
     }
-    this.seenPersistence = config.seenPersistence;
+    this.seenPersistence = config.seenPersistence === false ? null : config.seenPersistence;
     this.protectedSeen = this.seenPersistence != null || this.channelPolicies
       ? new SeenCache(this.maxSeen, this.seenTtlMs, this.seenPersistence) : null;
     this.welcomeByChannel = new Map();
@@ -179,23 +180,24 @@ class Sidechannel extends Feature {
       }
     }
     this.welcomedChannels = new Set();
+    const selfKey = normalizeKeyHex(this.peer?.wallet?.publicKey);
     if (this.channelPolicies) {
       for (const [channel, policy] of this.channelPolicies) {
-        if (policy.welcome !== undefined && !this._verifyWelcome(policy.welcome, channel, null)) {
-          throw new TypeError(`Invalid configured welcome for ${channel}`);
-        }
-        if (policy.ownerKey && policy.ownerKey === normalizeKeyHex(this.peer?.wallet?.publicKey)) {
+        if (policy.welcome !== undefined) this.welcomeByChannel.set(channel, policy.welcome);
+        if (policy.ownerKey && policy.ownerKey === selfKey) {
           this._rememberWelcome(channel);
         }
       }
     }
     for (const [channel, welcome] of this.welcomeByChannel.entries()) {
-      this._verifyWelcome(welcome, channel, null);
+      const valid = this._verifyWelcome(welcome, channel, null);
+      if (!valid && this.channelPolicies?.get(channel)?.welcome !== undefined) {
+        throw new TypeError(`Invalid configured welcome for ${channel}`);
+      }
     }
-    const selfKey = normalizeKeyHex(this.peer?.wallet?.publicKey);
     if (selfKey) {
-      for (const channel of this.ownerKeys.keys()) {
-        if (this._getOwnerKey(channel) === selfKey) this._rememberWelcome(channel);
+      for (const [channel, key] of this.ownerKeys) {
+        if ((this.channelPolicies?.get(channel)?.ownerKey ?? key) === selfKey) this._rememberWelcome(channel);
       }
       if (this.defaultOwnerKey && this.defaultOwnerKey === selfKey && this.entryChannel) {
         this._rememberWelcome(this.entryChannel);
@@ -753,8 +755,6 @@ class Sidechannel extends Feature {
     if (!channel) return null;
     const existing = this.channels.get(channel);
     if (existing && options === undefined) return existing;
-    if (!existing && this.channels.size >= MAX_CHANNELS &&
-        (options !== undefined || this.channelPolicies?.size || this.seenPersistence != null)) return null;
     let policy = this.channelPolicies?.get(channel);
     if (options !== undefined) {
       try {
@@ -763,13 +763,14 @@ class Sidechannel extends Feature {
         if (!options || typeof options !== 'object' || Array.isArray(options)) return null;
         const merged = { ...this.startupPolicies?.get(channel), ...options };
         const requested = channelPolicy(channel, merged);
-        if (existing) return policy && stableStringify(requested) === stableStringify(policy) ? existing : null;
-        if (!policy && this.channelPolicies?.size >= MAX_CHANNELS) return null;
+        if (existing) return stableStringify(requested) === stableStringify(policy) ? existing : null;
+        if (requested && !policy && this.channelPolicies?.size >= MAX_CHANNELS) return null;
         policy = requested;
       } catch {
         return null;
       }
     }
+    if (this.channels.size >= MAX_CHANNELS && (policy || this.channelPolicies?.size || this.seenPersistence != null)) return null;
     if (this.seenPersistence != null && b4a.byteLength(channel) > 256) return null;
     if (this._inviteRequired(channel)) {
       const selfKey = normalizeKeyHex(this.peer?.wallet?.publicKey);
@@ -782,7 +783,13 @@ class Sidechannel extends Feature {
     if (policy) {
       const previousOwner = this._getOwnerKey(channel);
       const owner = policy.ownerKey ?? previousOwner;
-      if (policy.welcome !== undefined && !this._verifyWelcome(policy.welcome, channel, null, owner)) return null;
+      if (policy.welcome !== undefined && policy.welcome !== this._getConfiguredWelcome(channel)) {
+        try {
+          if (!this._verifyWelcome(policy.welcome, channel, null, owner)) return null;
+        } catch {
+          return null;
+        }
+      }
       if (!policy.welcome && previousOwner !== owner) {
         this.welcomedChannels.delete(channel);
         this.welcomeByChannel.delete(channel);
@@ -791,6 +798,8 @@ class Sidechannel extends Feature {
       if (!this.channelPolicies) this.channelPolicies = new Map();
       this.channelPolicies.set(channel, policy);
       if (!this.protectedSeen) this.protectedSeen = new SeenCache(this.maxSeen, this.seenTtlMs);
+    } else if (options !== undefined) {
+      this.channelPolicies?.delete(channel);
     }
     const entry = {
       name: channel,
@@ -978,7 +987,7 @@ class Sidechannel extends Feature {
       return;
     }
 
-    const deliver = (payload, action, acceptedKey) => {
+    const deliver = (payload, action, acceptedKey, json) => {
       if (acceptedKey) this.protectedSeen.remember(acceptedKey, this._now());
       if (action === HANDSHAKE) return;
       if (typeof action === 'string') {
@@ -994,8 +1003,7 @@ class Sidechannel extends Feature {
       } else if (this.onMessage) {
         // The application owns its delivered copy. Keep the admitted content
         // for relay even when a callback edits nested objects synchronously.
-        const copy = acceptedKey && this.relayEnabled && payload.ttl > 0
-          ? JSON.parse(JSON.stringify(payload)) : payload;
+        const copy = acceptedKey ? JSON.parse(json) : payload;
         this.onMessage(entry.name, copy, connection);
       } else {
         const from = payload?.from ?? 'unknown';
@@ -1080,6 +1088,7 @@ class Sidechannel extends Feature {
       encoding: receiveEncoding(limit),
       onmessage: (frame) => {
         if (!frame || this.channels.get(entry.name) !== entry || this._isBlocked(connection)) return;
+        if (this.connections.get(connection)?.get(entry.name)?.channel !== channel) return;
         const { payload, bytes } = frame;
         if (payload?.channel !== entry.name) return;
         const key = seenKey(payload);
@@ -1101,7 +1110,7 @@ class Sidechannel extends Feature {
           // Legacy invite/welcome normalizers can reject malformed JSON field types.
           return;
         }
-        if (action !== false) deliver(payload, action, key);
+        if (action !== false) deliver(payload, action, key, frame.json);
       }
     } : { encoding: c.json, onmessage: legacyReceive });
 
@@ -1361,7 +1370,7 @@ class Sidechannel extends Feature {
     let sent = false;
     for (const [connection, perConn] of this.connections) {
       const record = perConn.get(channel);
-      if (!record?.channel.opened || !this._remoteAuthorized(channel, connection)) continue;
+      if (!record?.channel?.opened || record.channel.closed || !this._remoteAuthorized(channel, connection)) continue;
       if (!sent) this._rememberOutbound(envelope);
       record.message.send(envelope);
       sent = true;

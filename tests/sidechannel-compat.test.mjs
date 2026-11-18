@@ -9,9 +9,9 @@ const alice = await wallet();
 const bob = await wallet();
 const timestamp = 1_700_000_000_000;
 
-function exchange(Sender, Receiver, config = {}) {
+function exchange(Sender, Receiver, config = {}, receiveConfig = config) {
   const { sc: sender } = peer(Sender, alice, config);
-  const { sc: receiver, delivered } = peer(Receiver, bob, config);
+  const { sc: receiver, delivered } = peer(Receiver, bob, receiveConfig);
   sender._now = receiver._now = () => timestamp;
   const outgoing = port(sender);
   const incoming = port(receiver, 'room', alice.publicKey);
@@ -88,5 +88,25 @@ test('unconfigured welcome/owner/rate drops keep their 0.0.11 seen-list decision
       assert.equal(delivered.length, 0);
       assert.equal(relay.sent.length, 0);
     }
+  }
+});
+
+test('disabled options keep the legacy decoder, welcome decisions and wire bytes', () => {
+  const config = { seenPersistence: false, channelOptions: { room: { verifySignature: false } } };
+  const mixed = exchange(Old, Current, {}, config);
+  assert.equal(mixed.incoming.encoding, c.json);
+  assert.deepEqual(mixed.relay.sent, exchange(Old, Old).relay.sent);
+  const empty = exchange(Current, Old, { channelOptions: { room: {} } }, {});
+  assert.deepEqual(empty.outgoing.sent, exchange(Old, Old).outgoing.sent);
+});
+
+test('explicit per-channel PoW produces identical original and relayed bytes at a shared difficulty', () => {
+  const global = { powEnabled: true, powDifficulty: 9 };
+  const selected = { channelOptions: { room: { powDifficulty: 9, verifySignature: true } } };
+  const reference = exchange(Old, Old, global);
+  for (const pair of [exchange(Old, Current, global, selected), exchange(Current, Old, selected, global)]) {
+    assert.deepEqual(pair.outgoing.sent, reference.outgoing.sent);
+    assert.deepEqual(pair.relay.sent, reference.relay.sent);
+    assert.deepEqual(pair.delivered, reference.delivered);
   }
 });
