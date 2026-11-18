@@ -10,9 +10,20 @@ const MAX_IDS = 20_000;
 
 // Scope new caches to the transport channel. A public channel cannot reserve
 // IDs on a channel with stronger admission requirements.
-export function seenKey(channel, id) {
+export function seenKey(payload) {
+  const { channel, id } = payload;
   if (typeof id !== 'string' || !id || id.length > 512 || b4a.byteLength(id) > 512) return null;
-  return crypto.createHash('sha256').update(JSON.stringify([channel, id])).digest('hex');
+  const from = payload.from;
+  // Version 1 emits hex. Also accept the JSON Buffer representation recognized
+  // by the legacy signer. Isolate transport handshakes from application IDs.
+  let author = '';
+  if (typeof from === 'string' && from.length <= 128) author = from.trim().toLowerCase();
+  else if (from?.type === 'Buffer' && Array.isArray(from.data) && from.data.length === 32) {
+    author = b4a.toString(b4a.from(from.data), 'hex');
+  } else if (from != null) return null;
+  const control = payload.message?.control;
+  const kind = control === 'auth' || control === 'welcome' ? control : '';
+  return crypto.createHash('sha256').update(JSON.stringify([channel, author, kind, id])).digest('hex');
 }
 
 function readRange(file, offset, length) {
