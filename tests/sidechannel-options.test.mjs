@@ -216,3 +216,99 @@ test('option bounds reject excessive difficulty, bytes, persistence and channel 
   assert.equal(await sc.addChannel('overflow', { verifySignature: true }), true);
   await sc.stop();
 });
+
+test('leave during an active policy join retires its discovery and pending callbacks', async () => {
+  const { sc } = peer(Current, bob, { channels: [] });
+  await sc.start();
+  let release;
+  const pending = new Promise(resolve => { release = resolve; });
+  const left = [];
+  sc.peer.swarm.flush = () => pending;
+  sc.peer.swarm.leave = topic => left.push(topic);
+  const join = sc.addChannel('changing', { verifySignature: true });
+  const entry = sc.channels.get('changing');
+  const leave = sc.removeChannel('changing');
+  release();
+  assert.equal(await leave, true);
+  assert.equal(await join, false);
+  assert.deepEqual(left, [entry.topic]);
+  assert.equal(entry.announced, false);
+});
+
+test('validated channels scope identical IDs to their authors, and wait for a welcome before recording', () => {
+  const config = opts({ verifySignature: true, welcomeRequired: true, ownerKey: alice.publicKey });
+  const { sc, delivered } = peer(Current, bob, config);
+  const incoming = port(sc);
+  const relay = port(sc);
+  const first = author._buildPayload('room', 'author A');
+  incoming.inject(first);
+  assert.equal(relay.sent.length, 0);
+  const body = { channel: 'room', issuedAt: 1, ownerPubKey: alice.publicKey.toString('hex'), text: '', version: 1 };
+  const welcome = { payload: body, sig: alice.sign(Buffer.from(JSON.stringify(body))).toString('hex') };
+  incoming.inject(author._buildPayload('room', { control: 'welcome', welcome }));
+  incoming.inject(first);
+  const second = { ...sc._buildPayload('room', 'author B'), id: first.id };
+  sc._attachSig(second);
+  incoming.inject(second);
+  assert.deepEqual(delivered.map(d => d.payload.message), ['author A', 'author B']);
+  assert.equal(relay.sent.length, 2);
+});
+
+test('rebroadcast honors owner and invite policies including expired peer access', () => {
+  const { sc } = peer(Current, bob, {
+    inviteRequired: true, inviterKeys: [bob.publicKey], ...opts({ ownerKey: alice.publicKey, ownerWriteOnly: true })
+  });
+  const peerPort = port(sc, 'room', alice.publicKey);
+  const signed = author._buildPayload('room', 'owner content');
+  assert.equal(sc.rebroadcast(signed), false);
+  sc._rememberInvite('room', alice.publicKey.toString('hex'), sc._now() + 60_000);
+  assert.equal(sc.rebroadcast(sc._buildPayload('room', 'listener')), false);
+  assert.equal(sc.rebroadcast(signed), true);
+  sc._now = () => Date.now() + 120_000;
+  assert.equal(sc.rebroadcast(signed), false);
+  assert.equal(peerPort.sent.length, 1);
+});
+
+test('option receive and send reject excessive nesting without consuming a valid ID', () => {
+  const { sc, delivered } = peer(Current, bob, opts({ verifySignature: true, powDifficulty: 0 }));
+  const incoming = port(sc);
+  const relay = port(sc);
+  let deep = null;
+  for (let i = 0; i < 80; i++) deep = [deep];
+  const signed = author._buildPayload('room', null);
+  incoming.inject({ ...signed, message: deep });
+  assert.equal(sc.broadcast('room', deep), false);
+  incoming.inject(signed);
+  assert.deepEqual([delivered.length, relay.sent.length], [1, 1]);
+});
+
+test('recent IDs loaded from multiple hours obey maxSeen and recover a partial trailing record', async t => {
+  const directory = fs.mkdtempSync(path.join(process.cwd(), '.seen-test-'));
+  t.after(() => fs.rmSync(directory, { force: true, recursive: true }));
+  const config = { seenPersistence: { directory, hours: 3, maxFileBytes: 128 } };
+  let now = 3_600_000 * 20;
+  const first = peer(Current, bob, config).sc;
+  first._now = () => now;
+  await first.start();
+  const incoming = port(first);
+  const payloads = Array.from({ length: 3 }, (_, i) => author._buildPayload('room', i));
+  for (const payload of payloads) {
+    incoming.inject(payload);
+    now += 3_600_000;
+  }
+  await first.stop();
+  now -= 3_600_000;
+  const newest = path.join(directory, fs.readdirSync(directory).sort().at(-1));
+  fs.appendFileSync(newest, Buffer.from([0, 1, 2]));
+  const { sc, delivered } = peer(Current, bob, { ...config, maxSeen: 2 });
+  sc._now = () => now;
+  await sc.start();
+  const input = port(sc);
+  input.inject(payloads[1]);
+  input.inject(payloads[2]);
+  assert.equal(delivered.length, 0);
+  assert.equal(fs.statSync(newest).size, 32);
+  input.inject(payloads[0]);
+  assert.equal(delivered.length, 1);
+  await sc.stop();
+});

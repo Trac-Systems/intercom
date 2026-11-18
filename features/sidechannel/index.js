@@ -783,6 +783,7 @@ class Sidechannel extends Feature {
       topic: toTopic(channel),
       protocol: toProtocol(channel)
     };
+    if (policy || this.seenPersistence != null) entry.managed = true;
     this.channels.set(channel, entry);
     return entry;
   }
@@ -862,6 +863,7 @@ class Sidechannel extends Feature {
   }
 
   _openChannelForConnection(connection, entry) {
+    if ((entry.managed || this.channelPolicies?.has(entry.name)) && this.channels.get(entry.name) !== entry) return;
     const mux = connection.userData;
     if (!mux || typeof mux.createChannel !== 'function') {
       const tries = (connection.__sidechannelMuxTries || 0) + 1;
@@ -978,6 +980,7 @@ class Sidechannel extends Feature {
     };
 
     const legacyReceive = (payload) => {
+      if (this.channelPolicies?.has(entry.name) && this.channels.get(entry.name) !== entry) return;
       if (this._isBlocked(connection)) return;
       let payloadJson = null;
       try {
@@ -1075,6 +1078,7 @@ class Sidechannel extends Feature {
     channel
       .fullyOpened()
       .then((opened) => {
+        if (entry.managed && (this.channels.get(entry.name) !== entry || perConn.get(entry.name) !== record)) return;
         if (this.debug) {
           console.log(
             `[sidechannel:${entry.name}] channel open=${opened} for ${this._getRemoteKey(connection)}`
@@ -1165,7 +1169,9 @@ class Sidechannel extends Feature {
     const announcing = (async () => {
       try {
         this.peer.swarm.join(entry.topic, { server: true, client: true });
+        if (entry.managed) entry.discoveryJoined = true;
         await this._flushSwarm();
+        if (entry.managed && (this.channels.get(entry.name) !== entry || !this.started)) return false;
         this._markAnnounced(entry, true);
         return true;
       } catch (err) {
@@ -1198,7 +1204,7 @@ class Sidechannel extends Feature {
     const announced = this.started
       ? await this._announceChannel(entry)
       : await this._whenAnnounced(entry);
-    if (!announced) return false;
+    if (!announced || (entry.managed && this.channels.get(entry.name) !== entry)) return false;
 
     for (const connection of this.connections.keys()) {
       this._openChannelForConnection(connection, entry);
@@ -1214,7 +1220,7 @@ class Sidechannel extends Feature {
     if (!entry) return false;
 
     // Close mux protocol channels for this topic across all active connections.
-    for (const [, perConn] of this.connections.entries()) {
+    for (const [connection, perConn] of this.connections.entries()) {
       const record = perConn.get(entry.name);
       if (record) {
         try {
@@ -1226,6 +1232,7 @@ class Sidechannel extends Feature {
         perConn?._openRetries?.delete?.(entry.name);
       } catch (_e) {}
       try {
+        if (entry.managed) connection.userData?.unpair?.({ protocol: entry.protocol });
         perConn?._paired?.delete?.(entry.protocol);
       } catch (_e) {}
     }
@@ -1234,7 +1241,7 @@ class Sidechannel extends Feature {
 
     // Release anyone waiting for this channel to be announced: it is going away,
     // so the answer is a definitive "not joined" rather than a hang.
-    const wasAnnounced = entry.announced === true;
+    const wasAnnounced = entry.announced === true || entry.discoveryJoined === true;
     this._markAnnounced(entry, false);
 
     // Drop in-memory per-channel state to avoid unbounded growth from ephemeral channels.
@@ -1438,6 +1445,7 @@ class Sidechannel extends Feature {
     const round = [];
     for (const entry of this.channels.values()) {
       this.peer.swarm.join(entry.topic, { server: true, client: true });
+      if (entry.managed) entry.discoveryJoined = true;
       round.push(entry);
     }
     await this._flushSwarm();
