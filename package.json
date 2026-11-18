@@ -30,6 +30,7 @@
     "start": "node scripts/pear-runner.mjs",
     "peer": "node scripts/pear-runner.mjs",
     "test": "node --test tests/*.test.mjs",
+    "test:review": "node --test tests/review/*.test.mjs",
     "test:pear-runner": "node --test tests/pear-runner.test.mjs"
   },
   "overrides": {
