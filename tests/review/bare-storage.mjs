@@ -24,10 +24,12 @@ for (const text of ['first', 'second', 'third']) {
     throw new Error('The release verifier rejected the typed wire frame');
   }
   sc._rememberOutbound(frame);
-  keys.push(seenKey(frame));
+  keys.push(seenKey(frame, sc.channels.get('room').scope, true));
 }
+await sc.stop();
 const restarted = new Candidate({ wallet }, config);
 const retained = keys.map(key => restarted.protectedSeen.has(key, now));
 const bytes = fs.statSync(config.seenPersistence.directory + '/seen-10.bin').size;
+await restarted.stop();
 console.log(JSON.stringify({ retained, bytes, version: Bare.versions.bare }));
 Bare.exit(0);

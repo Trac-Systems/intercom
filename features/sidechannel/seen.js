@@ -2,6 +2,7 @@ import crypto from 'crypto';
 import b4a from 'b4a';
 import fs from 'fs';
 import path from 'path';
+import os from 'os';
 import { integer } from './channel-options.js';
 
 const HOUR = 3_600_000;
@@ -10,7 +11,7 @@ const MAX_IDS = 20_000;
 
 // Scope new caches to the transport channel. A public channel cannot reserve
 // IDs on a channel with stronger admission requirements.
-export function seenKey(payload) {
+export function seenKey(payload, scope, verified) {
   const { channel, id } = payload;
   if (typeof id !== 'string' || !id || id.length > 512 || b4a.byteLength(id) > 512) return null;
   const from = payload.from;
@@ -24,27 +25,36 @@ export function seenKey(payload) {
   } else if (from != null) return null;
   const control = payload.message?.control;
   const kind = control === 'auth' || control === 'welcome' ? control : '';
-  return crypto.createHash('sha256').update(JSON.stringify([channel, author, kind, id])).digest('hex');
+  return crypto.createHash('sha256').update(JSON.stringify(['receipt-v2', scope, verified, channel, author, kind, id])).digest('hex');
 }
 
-function readRange(file, offset, length) {
-  const fd = fs.openSync(file, 'r');
-  try {
-    const data = b4a.alloc(length);
-    let read = 0;
-    while (read < length) {
-      const count = fs.readSync(fd, data, read, length - read, offset + read);
-      if (!count) throw new Error('Seen file changed during read');
-      read += count;
-    }
-    return data;
-  } finally {
-    fs.closeSync(fd);
+function sameFile(expected, actual) {
+  return expected && actual && expected.dev === actual.dev && expected.ino === actual.ino;
+}
+
+function readRange(fd, offset, length) {
+  const data = b4a.alloc(length);
+  let read = 0;
+  while (read < length) {
+    const count = fs.readSync(fd, data, read, length - read, offset + read);
+    if (!count) throw new Error('Seen file changed during read');
+    read += count;
+  }
+  return data;
+}
+
+// The bundled Bare fs omits O_EXCL and O_NOFOLLOW from its JS constants.
+// Use the platform open(2) flags there. Fail closed on unsupported runtimes.
+function safeFlags() {
+  const { O_EXCL, O_NOFOLLOW, O_NONBLOCK } = fs.constants;
+  if (O_EXCL && O_NOFOLLOW && O_NONBLOCK) return { exclusive: O_EXCL, safe: O_NOFOLLOW | O_NONBLOCK };
+  switch (os.platform()) {
+    case 'darwin': return { exclusive: 0x800, safe: 0x100 | 0x4 };
+    case 'linux': return { exclusive: 0x80, safe: 0x20000 | 0x800 };
+    default: throw new Error('Private seen storage requires safe POSIX open flags');
   }
 }
 
-// A private directory per running peer. Files contain only consecutive SHA-256
-// digests. The active file compacts atomically when full, keeping its newer half.
 class HourFiles {
   constructor(config) {
     if (typeof config?.directory !== 'string' || !config.directory.trim()) throw new TypeError('Expected seenPersistence.directory');
@@ -55,56 +65,143 @@ class HourFiles {
     this.hours = integer(config.hours ?? 3, 'hours', 1, 24);
     const bytes = integer(config.maxFileBytes ?? 65_536, 'maxFileBytes', HASH_BYTES, 262_144);
     this.capacity = Math.floor(bytes / HASH_BYTES) * HASH_BYTES;
+    this.flags = safeFlags();
+    this.uid = globalThis.process?.geteuid?.() ?? os.userInfo().uid;
+    this.lockPath = path.join(this.directory, '.writer.lock');
+    this.lock = null;
     this.hour = null;
+    this.highWater = 0;
+    this.active = null;
   }
 
   file(hour) { return path.join(this.directory, `seen-${hour}.bin`); }
 
-  rotate(hour, ids, maxIds) {
-    if (hour === this.hour) return;
+  checkDirectory() {
+    const stat = fs.lstatSync(this.directory);
+    if (!stat.isDirectory() || stat.uid !== this.uid || (stat.mode & 0o077) ||
+        (this.lock && !sameFile(this.parent, stat))) throw new Error('Expected a private, owner-only seen directory');
+    if (this.lock && !sameFile(this.lock, fs.lstatSync(this.lockPath))) throw new Error('Seen writer lock changed');
+    return stat;
+  }
+
+  acquire() {
     fs.mkdirSync(this.directory, { recursive: true, mode: 0o700 });
-    const oldest = hour - this.hours + 1;
+    this.parent = this.checkDirectory();
+    // mkdir is exclusive on both supported runtimes. Never steal a stale lock.
+    fs.mkdirSync(this.lockPath, { mode: 0o700 });
+    this.lock = fs.lstatSync(this.lockPath);
+    this.checkDirectory();
+  }
+
+  close() {
+    if (this.lock) {
+      this.checkDirectory();
+      fs.rmdirSync(this.lockPath);
+      this.lock = null;
+    }
+    this.hour = null;
+    this.active = null;
+  }
+
+  regular(file) {
+    const stat = fs.lstatSync(file);
+    if (!stat.isFile() || stat.nlink !== 1 || stat.uid !== this.uid) throw new Error('Expected an owned regular seen file');
+    return stat;
+  }
+
+  open(file, flags, expected) {
+    this.checkDirectory();
+    const fd = fs.openSync(file, flags | this.flags.safe, 0o600);
+    try {
+      const stat = this.regular(file);
+      if (!sameFile(stat, fs.fstatSync(fd)) || (expected && !sameFile(stat, expected))) {
+        throw new Error('Seen file identity changed');
+      }
+      this.checkDirectory();
+      return fd;
+    } catch (error) {
+      fs.closeSync(fd);
+      throw error;
+    }
+  }
+
+  replace(file, data, expected) {
+    const temp = path.join(this.directory, 'seen-compact-' + crypto.randomBytes(16).toString('hex') + '.tmp');
+    const flags = fs.constants.O_WRONLY | fs.constants.O_CREAT | this.flags.exclusive;
+    const fd = this.open(temp, flags);
+    try {
+      if (fs.writeSync(fd, data, 0, data.length, 0) !== data.length) throw new Error('Incomplete compaction');
+      this.checkDirectory();
+      if (!sameFile(this.regular(file), expected) || !sameFile(this.regular(temp), fs.fstatSync(fd))) {
+        throw new Error('Seen file changed before compaction');
+      }
+      fs.renameSync(temp, file);
+      return fs.fstatSync(fd);
+    } finally {
+      fs.closeSync(fd);
+    }
+  }
+
+  rotate(observed, ids, maxIds) {
+    if (this.hour !== null && observed <= this.hour) return;
+    const acquiring = !this.lock;
+    if (acquiring) this.acquire();
+    try {
+      this.reload(observed, ids, maxIds);
+    } catch (error) {
+      if (acquiring) this.close();
+      throw error;
+    }
+  }
+
+  reload(observed, ids, maxIds) {
+    this.checkDirectory();
     const files = [];
+    const cleanup = [];
     const dir = fs.opendirSync(this.directory);
     try {
-      let entries = 0;
+      let count = 0;
       for (let entry; (entry = dir.readSync());) {
-        if (++entries > 64) throw new Error('Use a dedicated seenPersistence directory');
-        if (entry.name === 'seen-compact.tmp') {
-          fs.unlinkSync(path.join(this.directory, entry.name));
-          continue;
-        }
+        if (++count > 64) throw new Error('Use a dedicated seenPersistence directory');
         const match = /^seen-(0|[1-9]\d{0,11})\.bin$/.exec(entry.name);
-        if (!match) continue;
-        if (!entry.isFile()) throw new Error(`Expected a regular file: ${entry.name}`);
-        const n = Number(match[1]);
-        if (n < oldest || n > hour) fs.unlinkSync(this.file(n));
-        else files.push(n);
+        const file = path.join(this.directory, entry.name);
+        if (match) files.push({ hour: Number(match[1]), file, stat: this.regular(file) });
+        else if (/^seen-compact(?:-[0-9a-f]{32})?\.tmp$/.test(entry.name)) cleanup.push({ file, stat: this.regular(file) });
       }
     } finally {
       dir.closeSync();
     }
-
-    ids.clear();
-    this.bytes = 0;
-    // Load at most maxIds hashes, starting with the newest file tails.
-    const recent = [];
+    files.sort((a, b) => b.hour - a.hour);
+    const hour = Math.max(observed, this.highWater, files[0]?.hour ?? 0);
     let remaining = maxIds;
-    for (const n of files.sort((a, b) => b - a)) {
-      const file = this.file(n);
-      const size = fs.statSync(file).size;
-      const aligned = size - size % HASH_BYTES;
-      const keep = Math.min(this.capacity, aligned);
-      if (size !== keep) {
-        // Recover a torn last append, or keep the newest tail after a cap reduction.
-        this.replace(file, readRange(file, aligned - keep, keep));
+    let active = null;
+    const recent = [];
+    for (const item of files) {
+      const { file, stat } = item;
+      if (item.hour <= hour - this.hours) {
+        // A regressed clock may load receipts but may never prune buckets.
+        if (observed >= hour) cleanup.push(item);
+        continue;
       }
-      if (n === hour) this.bytes = keep;
-      const length = Math.min(remaining * HASH_BYTES, keep);
-      if (!length) continue;
-      recent.push([n, readRange(file, keep - length, length)]);
-      remaining -= length / HASH_BYTES;
+      const aligned = stat.size - stat.size % HASH_BYTES;
+      const keep = Math.min(this.capacity, aligned);
+      const fd = this.open(file, fs.constants.O_RDONLY, stat);
+      try {
+        if (stat.size !== keep) item.stat = this.replace(file, readRange(fd, aligned - keep, keep), stat);
+        const length = Math.min(remaining * HASH_BYTES, keep);
+        if (length) recent.push([item.hour, readRange(fd, aligned - length, length)]);
+        remaining -= length / HASH_BYTES;
+      } finally {
+        fs.closeSync(fd);
+      }
+      if (item.hour === hour) active = item.stat;
     }
+    for (const { file, stat } of cleanup) {
+      this.checkDirectory();
+      if (!sameFile(stat, this.regular(file))) throw new Error('Seen file changed before cleanup');
+      fs.unlinkSync(file);
+    }
+    ids.clear();
     for (const [n, data] of recent.reverse()) {
       for (let i = 0; i < data.length; i += HASH_BYTES) {
         const key = b4a.toString(data, 'hex', i, i + HASH_BYTES);
@@ -112,41 +209,27 @@ class HourFiles {
         ids.set(key, n * HOUR);
       }
     }
-    this.hour = hour;
-  }
-
-  replace(file, data) {
-    const temp = path.join(this.directory, 'seen-compact.tmp');
-    fs.writeFileSync(temp, data, { mode: 0o600, flag: 'wx' });
-    fs.renameSync(temp, file);
+    this.active = active;
+    this.hour = this.highWater = hour;
   }
 
   append(key) {
     const file = this.file(this.hour);
     const hash = b4a.from(key, 'hex');
-    if (this.bytes + HASH_BYTES > this.capacity) {
-      const keep = Math.floor(this.capacity / (2 * HASH_BYTES)) * HASH_BYTES;
-      const tail = readRange(file, this.bytes - keep, keep);
-      this.replace(file, b4a.concat([tail, hash]));
-      this.bytes = keep + HASH_BYTES;
-    } else {
-      // Positional writes keep the hard cap even after a partial write. Open
-      // new files exclusively and detect a changed file before writing.
-      let fd;
-      try {
-        fd = fs.openSync(file, 'r+');
-      } catch (error) {
-        if (error.code !== 'ENOENT') throw error;
-        fd = fs.openSync(file, 'wx', 0o600);
+    const flags = fs.constants.O_RDWR | (this.active ? 0 : fs.constants.O_CREAT | this.flags.exclusive);
+    const fd = this.open(file, flags, this.active);
+    try {
+      const stat = fs.fstatSync(fd);
+      if (stat.size !== (this.active?.size ?? 0)) throw new Error('Seen file size changed');
+      if (stat.size + HASH_BYTES > this.capacity) {
+        const keep = Math.floor(this.capacity / (2 * HASH_BYTES)) * HASH_BYTES;
+        this.active = this.replace(file, b4a.concat([readRange(fd, stat.size - keep, keep), hash]), stat);
+      } else {
+        if (fs.writeSync(fd, hash, 0, HASH_BYTES, stat.size) !== HASH_BYTES) throw new Error('Incomplete seen record');
+        this.active = fs.fstatSync(fd);
       }
-      try {
-        if (fs.fstatSync(fd).size !== this.bytes) throw new Error('Seen file changed; use a directory per peer');
-        const written = fs.writeSync(fd, hash, 0, HASH_BYTES, this.bytes);
-        if (written !== HASH_BYTES) throw new Error('Incomplete seen record');
-        this.bytes += written;
-      } finally {
-        fs.closeSync(fd);
-      }
+    } finally {
+      fs.closeSync(fd);
     }
   }
 }
@@ -170,9 +253,9 @@ export class SeenCache {
     }
   }
 
-  reset() {
+  close() {
+    this.files?.close();
     this.ids.clear();
-    if (this.files) this.files.hour = null;
   }
 
   has(key, now) {
