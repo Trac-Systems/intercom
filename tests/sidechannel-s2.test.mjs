@@ -24,22 +24,26 @@ test('the embedding module exports the release constructor and an opt-in subclas
     fs.readFileSync(new URL('./fixtures/sidechannel-0.0.11.js', import.meta.url)));
 });
 
-test('verified admissions use distinct receipts across a policy change and restart', async t => {
+test('verified receipts survive a policy change and restart; unverified claims never block a signed frame', async t => {
   const directory = fs.mkdtempSync('./.seen-test-');
   t.after(() => fs.rmSync(directory, { recursive: true, force: true }));
   const config = { seenPersistence: { directory } };
   const first = peer(Managed, reader, config);
   await first.sc.start();
   const original = sender._buildPayload('room', 'one');
+  const claimed = sender._buildPayload('room', 'two');
   const input = port(first.sc);
   input.inject({ ...original, sig: undefined });
   input.inject(original);
-  assert.equal(first.delivered.length, 2);
+  input.inject({ ...claimed, sig: undefined });
+  assert.equal(first.delivered.length, 3);
   await first.sc.stop();
   const next = peer(Managed, reader, { ...config, channelOptions: { room: { verifySignature: true } } });
   await next.sc.start();
-  port(next.sc).inject(original);
-  assert.equal(next.delivered.length, 1);
+  const again = port(next.sc);
+  again.inject(original); // A retained verified receipt: duplicate.
+  again.inject(claimed); // Only an unverified claim existed: delivered.
+  assert.deepEqual(next.delivered.map(d => d.payload.message), ['two']);
   await next.sc.stop();
 });
 
@@ -98,7 +102,7 @@ test('stop while bootstrap is pending cannot reattach a listener or announce a t
   assert.equal(swarm.listenerCount('connection'), 0);
 });
 
-test('rejected unsigned frames spend admission capacity before decode, per connection and per service', () => {
+test('rejected unsigned frames spend admission capacity before decode, per connection and per service, with a fair share each', () => {
   const { sc, delivered } = peer(Managed, reader, { channelOptions: { room: { verifySignature: true } } });
   let now = 10000;
   sc._now = () => now;
@@ -113,7 +117,12 @@ test('rejected unsigned frames spend admission capacity before decode, per conne
     }
     assert.equal(c.decode(input.encoding, signed), null);
   }
+  // The shared pool is empty. A new connection still gets its guaranteed
+  // share (8 MiB/s over nine connections), then nothing more until refill.
   const fresh = port(sc);
+  let admitted = 0;
+  while (admitted < 100 && c.decode(fresh.encoding, unsigned)) admitted++;
+  assert.equal(admitted, Math.floor(8 * 1048576 / 9 / (16 * 1024)));
   assert.equal(c.decode(fresh.encoding, signed), null);
   assert.equal(delivered.length, 0);
   now += 1000;

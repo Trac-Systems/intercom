@@ -11,20 +11,47 @@ const MAX_METADATA_BYTES = 16 * 1024;
 const MAX_PENDING_FRAMES = 64;
 const REPLAY_WINDOW_MS = 1_000;
 const MIN_ADMISSION_COST = 16 * 1024;
+const MIN_FORWARD_COST = 1024;
 const GLOBAL_ADMISSION_BYTES = 8 * MAX_FRAME_BYTES;
+// Own frames and handshakes wait behind mux backpressure, per connection.
+export const BACKLOG_FRAMES = 256;
+export const BACKLOG_BYTES = 2 * MAX_FRAME_BYTES;
+export const TOTAL_BACKLOG_BYTES = 8 * MAX_FRAME_BYTES;
 
-// One second of burst capacity. A backwards clock step grants no refill.
-function spend(bucket, capacity, cost, now) {
+// One second of burst capacity. A backwards clock step grants no refill. A
+// fair share shrinks when connections arrive, so clamp to the current size.
+function refill(bucket, capacity, now) {
   if (bucket.time === undefined) {
     bucket.time = now;
     bucket.tokens = capacity;
   } else if (now > bucket.time) {
-    bucket.tokens = Math.min(capacity, bucket.tokens + (now - bucket.time) * capacity / 1000);
+    bucket.tokens += (now - bucket.time) * capacity / 1000;
     bucket.time = now;
   }
+  bucket.tokens = Math.min(capacity, bucket.tokens);
+}
+
+function spend(bucket, capacity, cost, now) {
+  refill(bucket, capacity, now);
   if (cost > bucket.tokens) return false;
   bucket.tokens -= cost;
   return true;
+}
+
+// Each connection may always spend its fair share of an instance budget.
+// That spending also draws the shared pool, into a debt of at most one pool,
+// so the long-run total stays at the pool rate. Spending beyond the share
+// borrows only tokens the pool still holds. Returns the plan or null.
+function fairPlan(fair, pool, share, capacity, cost, now) {
+  refill(fair, share, now);
+  refill(pool, capacity, now);
+  if (cost <= fair.tokens && pool.tokens - cost >= -capacity) return 'fair';
+  return cost <= pool.tokens ? 'pool' : null;
+}
+
+function charge(plan, fair, pool, cost) {
+  pool.tokens -= cost;
+  if (plan === 'fair') fair.tokens -= cost;
 }
 
 function metadataFits(payload) {
@@ -80,9 +107,17 @@ export class ManagedSidechannel extends Sidechannel {
     this.config = config;
     this.admission = new WeakMap();
     this.globalAdmission = {};
+    this.forwarding = new WeakMap();
     this.forwardBudget = {};
     this.replayBudget = {};
     this.recentReplays = new Map();
+    this.backlogBytes = 0;
+    // Cumulative send outcomes. Own frames include handshakes. Relays and
+    // explicit rebroadcasts are best effort; skipped copies are counted.
+    this.traffic = {
+      ownSent: 0, ownQueued: 0, ownDropped: 0,
+      relaySent: 0, relayDropped: 0, rebroadcastSent: 0, rebroadcastDropped: 0
+    };
     this.pendingBytes = 0;
     this.pendingFrames = 0;
     this.waits = new Set();
@@ -106,6 +141,14 @@ export class ManagedSidechannel extends Sidechannel {
     }
     this.startupPolicies = new Map(this.channelPolicies);
     this.seenPersistence = config.seenPersistence === false ? null : config.seenPersistence;
+    // The bounded miner fails closed above 16 bits. Refuse a configuration
+    // that would start and then drop every frame on a managed channel.
+    const initial = Array.isArray(config.channels) ? config.channels.map(normalizeChannel) : [];
+    for (const channel of new Set([...this.channelPolicies.keys(), ...(this.seenPersistence != null ? initial : [])])) {
+      if (channel && this._boundedPowPolicy(channel)?.powDifficulty > MAX_DIFFICULTY) {
+        throw new RangeError(`Effective PoW difficulty for ${channel} exceeds ${MAX_DIFFICULTY} on a managed channel`);
+      }
+    }
     this.protectedSeen = new SeenCache(this.maxSeen, this.seenTtlMs, this.seenPersistence);
     this.welcomedChannels.clear();
     this.welcomeByChannel.clear();
@@ -122,12 +165,19 @@ export class ManagedSidechannel extends Sidechannel {
     }
   }
 
+  // A verified receipt records that this author signed this ID on this
+  // channel, which no policy edit changes. Unverified claims stay scoped to
+  // the whole effective policy, so they never carry over to stronger rules.
+  _receiptKey(entry, payload, verified) {
+    return seenKey(payload, verified ? entry.scope : entry.claimScope, verified);
+  }
+
   _rememberOutbound(payload) {
     const entry = this.channels.get(payload.channel);
     if (entry?.managed) {
       const verified = this._validAuthorSignature(payload, normalizeKeyHex(payload.from));
       if (!verified && this.channelPolicies.get(entry.name)?.verifySignature) return false;
-      return this._storeReceipt(seenKey(payload, entry.scope, verified));
+      return this._storeReceipt(this._receiptKey(entry, payload, verified));
     }
     this._rememberSeen(payload.id, this._now());
     return true;
@@ -160,13 +210,42 @@ export class ManagedSidechannel extends Sidechannel {
     }
   }
 
+  // The share of an instance budget guaranteed to each connection.
+  _fairShare(capacity) {
+    return Math.min(MAX_FRAME_BYTES, capacity / Math.max(1, this.connections.size));
+  }
+
+  // Order: the release block, the per-connection ceiling, then the fair share
+  // or shared pool, then the release byte limiter. A rejected frame spends
+  // nothing, so a blocked or saturated connection takes no shared capacity.
   _admit(connection, bytes) {
+    if (this._isBlocked(connection)) return false;
     const now = this._now();
     let local = this.admission.get(connection);
-    if (!local) this.admission.set(connection, local = {});
+    if (!local) this.admission.set(connection, local = { ceiling: {}, fair: {} });
     const cost = Math.max(MIN_ADMISSION_COST, Math.min(bytes, MAX_FRAME_BYTES));
-    return spend(local, MAX_FRAME_BYTES, cost, now) &&
-      spend(this.globalAdmission, GLOBAL_ADMISSION_BYTES, cost, now) && this._checkRate(connection, bytes);
+    refill(local.ceiling, MAX_FRAME_BYTES, now);
+    if (cost > local.ceiling.tokens) return false;
+    const plan = fairPlan(local.fair, this.globalAdmission, this._fairShare(GLOBAL_ADMISSION_BYTES),
+      GLOBAL_ADMISSION_BYTES, cost, now);
+    if (!plan || !this._checkRate(connection, bytes)) return false;
+    local.ceiling.tokens -= cost;
+    charge(plan, local.fair, this.globalAdmission, cost);
+    return true;
+  }
+
+  // Relays are charged to the connection they came from, so a few busy
+  // neighbours cannot use up forwarding for everyone else. Explicit
+  // rebroadcasts (no origin) borrow from the shared pool only.
+  _chargeForward(origin, bytes) {
+    const now = this._now();
+    const cost = Math.max(MIN_FORWARD_COST, bytes);
+    if (!origin) return spend(this.forwardBudget, GLOBAL_ADMISSION_BYTES, cost, now);
+    let fair = this.forwarding.get(origin);
+    if (!fair) this.forwarding.set(origin, fair = {});
+    const plan = fairPlan(fair, this.forwardBudget, this._fairShare(GLOBAL_ADMISSION_BYTES), GLOBAL_ADMISSION_BYTES, cost, now);
+    if (plan) charge(plan, fair, this.forwardBudget, cost);
+    return !!plan;
   }
 
   _buildPayload(channel, message, invite = null) {
@@ -198,13 +277,89 @@ export class ManagedSidechannel extends Sidechannel {
     return Math.max(0, Math.min(MAX_HOPS, this.relayTtl));
   }
 
-  _sendFrame(record, payload, bytes) {
-    if (!record?.channel?.opened || record.channel.closed || record.channel.drained === false ||
-        bytes > MAX_FRAME_BYTES || !spend(this.forwardBudget, GLOBAL_ADMISSION_BYTES, Math.max(1024, bytes), this._now())) {
-      return false;
+  // kind is 'own' (broadcast), 'handshake' (welcome/auth), 'relay' or
+  // 'rebroadcast'. Own frames and handshakes on a managed session queue in
+  // order behind backpressure and report whether they were sent or queued.
+  // Relays and rebroadcasts are skipped while the session is busy and are
+  // charged to the forwarding budget; both outcomes are counted.
+  _sendFrame(record, payload, bytes, kind = 'relay', origin = null) {
+    const own = kind === 'own' || kind === 'handshake';
+    const perConn = record?.perConn;
+    if (!perConn || !record.channel?.opened || record.channel.closed || (record.managed && bytes > MAX_FRAME_BYTES)) {
+      return this._skipped(own ? 'own' : kind);
+    }
+    if (perConn.backlog.length) this._flushBacklog(perConn);
+    const busy = record.channel.drained === false || perConn.backlog.length > 0;
+    if (!own) {
+      if (busy || !this._chargeForward(origin, bytes)) return this._skipped(kind);
+    } else if (busy && record.managed) {
+      return this._enqueue(perConn, record, payload, bytes, kind === 'handshake');
     }
     record.message.send(payload);
+    this.traffic[own ? 'ownSent' : kind + 'Sent']++;
     return true;
+  }
+
+  _skipped(kind) {
+    this.traffic[kind + 'Dropped']++;
+    return false;
+  }
+
+  // Handshakes are at most two per session and only need the per-connection
+  // bound. A handshake that does not fit is rebuilt once the backlog drains.
+  _enqueue(perConn, record, payload, bytes, handshake) {
+    if (perConn.backlog.length >= BACKLOG_FRAMES || perConn.backlogBytes + bytes > BACKLOG_BYTES ||
+        (!handshake && this.backlogBytes + bytes > TOTAL_BACKLOG_BYTES)) {
+      if (handshake) perConn.handshakes.add(record);
+      return this._skipped('own');
+    }
+    perConn.backlog.push({ record, payload, bytes });
+    perConn.backlogBytes += bytes;
+    this.backlogBytes += bytes;
+    this.traffic.ownQueued++;
+    return true;
+  }
+
+  _flushBacklog(perConn) {
+    const queue = perConn.backlog;
+    while (queue.length) {
+      const item = queue[0];
+      const { record } = item;
+      const live = perConn.get(record.name) === record && record.channel.opened && !record.channel.closed;
+      if (live && record.channel.drained === false) return;
+      queue.shift();
+      perConn.backlogBytes -= item.bytes;
+      this.backlogBytes -= item.bytes;
+      if (!live) {
+        this.traffic.ownDropped++;
+        continue;
+      }
+      record.message.send(item.payload);
+      this.traffic.ownSent++;
+    }
+    const retry = [...perConn.handshakes];
+    perConn.handshakes.clear();
+    for (const record of retry) {
+      if (perConn.get(record.name) !== record || record.channel.closed) continue;
+      this._sendWelcome(record, record.entry, record.connection);
+      this._sendAuth(record, record.entry);
+    }
+  }
+
+  // Drop queued frames that match, e.g. one session on leave or all on close.
+  _purgeBacklog(perConn, match = () => true) {
+    const kept = [];
+    for (const item of perConn.backlog) {
+      if (!match(item.record)) {
+        kept.push(item);
+        continue;
+      }
+      perConn.backlogBytes -= item.bytes;
+      this.backlogBytes -= item.bytes;
+      this.traffic.ownDropped++;
+    }
+    perConn.backlog = kept;
+    for (const record of perConn.handshakes) if (match(record)) perConn.handshakes.delete(record);
   }
 
   _relay(channel, payload, origin) {
@@ -216,8 +371,8 @@ export class ManagedSidechannel extends Sidechannel {
     const bytes = frameBytes(relayed);
     if (bytes > MAX_FRAME_BYTES) return;
     for (const [connection, records] of this.connections) {
-      if (connection !== origin && this._remoteAuthorized(channel, connection)) {
-        this._sendFrame(records.get(channel), relayed, bytes);
+      if (connection !== origin && this._remoteAuthorized(channel, connection) && records.has(channel)) {
+        this._sendFrame(records.get(channel), relayed, bytes, 'relay', origin);
       }
     }
   }
@@ -302,6 +457,9 @@ export class ManagedSidechannel extends Sidechannel {
       for (const key of this.channelPolicies.keys()) if (!this.startupPolicies.has(key)) reserved++;
       if (reserved >= MAX_CHANNELS) return null;
     }
+    // A managed join above the bounded miner's limit would drop every frame.
+    const difficulty = policy?.powDifficulty ?? (this._powRequired(channel) ? this.powDifficulty : 0);
+    if ((policy || this.seenPersistence != null) && difficulty > MAX_DIFFICULTY) return null;
     const entry = super._registerChannel(channel);
     if (!entry) return null;
     if (policy) this.channelPolicies.set(channel, policy);
@@ -334,7 +492,10 @@ export class ManagedSidechannel extends Sidechannel {
         pow: this._boundedPowPolicy(channel), configuredWelcome: welcome,
         allowRemoteOpen: this.allowRemoteOpen
       };
-      entry.scope = crypto.createHash('sha256').update(stableStringify(effective)).digest('hex');
+      // Verified receipts keep one scope; unverified claims use the policy.
+      // The channel, author, handshake kind and ID are part of every key.
+      entry.scope = 'verified';
+      entry.claimScope = crypto.createHash('sha256').update(stableStringify(effective)).digest('hex');
     }
     return entry;
   }
@@ -355,7 +516,7 @@ export class ManagedSidechannel extends Sidechannel {
     const payload = this._buildPayload(entry.name, { control: 'welcome', welcome });
     if (!payload) return;
     if (!this._rememberOutbound(payload)) return;
-    if (entry.managed) this._sendFrame(record, payload, frameBytes(payload));
+    if (entry.managed) this._sendFrame(record, payload, frameBytes(payload), 'handshake');
     else record.message.send(payload);
   }
 
@@ -374,7 +535,7 @@ export class ManagedSidechannel extends Sidechannel {
     });
     if (!payload) return;
     if (!this._rememberOutbound(payload)) return;
-    if (entry.managed) record.authSent = this._sendFrame(record, payload, frameBytes(payload));
+    if (entry.managed) record.authSent = this._sendFrame(record, payload, frameBytes(payload), 'handshake');
     else {
       record.message.send(payload);
       record.authSent = true;
@@ -500,6 +661,7 @@ export class ManagedSidechannel extends Sidechannel {
     for (const protocol of records._paired) {
       try { connection.userData?.unpair?.({ protocol }); } catch { /* The mux may already be destroyed. */ }
     }
+    this._purgeBacklog(records);
     for (const record of records.values()) {
       this._takeQueue(record);
       try { record.channel.close(); } catch { /* The transport is closing. */ }
@@ -564,11 +726,11 @@ export class ManagedSidechannel extends Sidechannel {
     const ownerOnly = this._ownerWriteOnly(entry.name) && control !== 'auth' && control !== 'welcome';
     const required = ownerOnly || policy?.verifySignature;
     const signed = !!(payload.sig || payload.signature);
-    let key = seenKey(payload, entry.scope, true);
+    let key = this._receiptKey(entry, payload, true);
     if (!key || this._alreadySeen(key)) return;
     if (!signed) {
       if (required) return;
-      key = seenKey(payload, entry.scope, false);
+      key = this._receiptKey(entry, payload, false);
       if (this._alreadySeen(key)) return;
     }
     if (!boundedValue(payload) || !metadataFits(payload)) return;
@@ -582,7 +744,7 @@ export class ManagedSidechannel extends Sidechannel {
         verified = this._validAuthorSignature(payload, author);
         if (!verified) {
           if (required) return;
-          key = seenKey(payload, entry.scope, false);
+          key = this._receiptKey(entry, payload, false);
           if (this._alreadySeen(key)) return;
         }
       }
@@ -605,7 +767,11 @@ export class ManagedSidechannel extends Sidechannel {
     this._deliver(entry, connection, payload, action, content, envelope);
   }
 
-  _openChannelForConnection(connection, entry) {
+  // remoteOpen is set when the remote peer opens this protocol. Protomux
+  // rejects that open as soon as the pair callback returns without a local
+  // channel, so cancel a pending local retry and replace a closed session
+  // (left by a remote leave or a rejected open) instead of waiting.
+  _openChannelForConnection(connection, entry, remoteOpen = false) {
     if (this.stopped || this.channels.get(entry.name) !== entry || connection.destroyed) return;
     let perConn = this.connections.get(connection);
     if (!perConn) {
@@ -613,9 +779,22 @@ export class ManagedSidechannel extends Sidechannel {
       perConn.timers = new Map();
       perConn._paired = new Set();
       perConn._openRetries = new Map();
+      perConn.backlog = [];
+      perConn.backlogBytes = 0;
+      perConn.handshakes = new Set();
       perConn.onClose = () => this._releaseConnection(connection);
       this.connections.set(connection, perConn);
       connection.on?.('close', perConn.onClose);
+    }
+    if (remoteOpen) {
+      clearTimeout(perConn.timers.get(entry));
+      perConn.timers.delete(entry);
+      const previous = perConn.get(entry.name);
+      if (previous?.channel?.closed) {
+        perConn.delete(entry.name);
+        this._takeQueue(previous);
+        this._purgeBacklog(perConn, record => record === previous);
+      }
     }
     if (perConn.has(entry.name) || perConn.timers.has(entry)) return;
     const isCurrent = () => this.connections.get(connection) === perConn && this.channels.get(entry.name) === entry;
@@ -638,7 +817,7 @@ export class ManagedSidechannel extends Sidechannel {
       perConn._paired.add(entry.protocol);
       if (typeof mux.pair === 'function') {
         mux.pair({ protocol: entry.protocol }, () => {
-          if (isCurrent()) this._openChannelForConnection(connection, entry);
+          if (isCurrent()) this._openChannelForConnection(connection, entry, true);
         });
       }
     }
@@ -653,7 +832,11 @@ export class ManagedSidechannel extends Sidechannel {
     const channel = mux.createChannel({
       protocol: entry.protocol,
       onopen() {},
-      onclose() {}
+      onclose() {},
+      // Protomux calls this on every local channel when the stream drains.
+      ondrain: () => {
+        if (this.connections.get(connection) === perConn) this._flushBacklog(perConn);
+      }
     });
     if (!channel) {
       if (this.debug) {
@@ -675,7 +858,10 @@ export class ManagedSidechannel extends Sidechannel {
       onmessage: payload => { if (active()) this._receiveLegacy(entry, connection, payload); }
     });
 
-    const record = { channel, message, authSent: false, pending: [] };
+    const record = {
+      channel, message, authSent: false, pending: [],
+      name: entry.name, entry, connection, perConn, managed: !!entry.managed
+    };
     perConn.set(entry.name, record);
 
     channel.open();
@@ -693,7 +879,8 @@ export class ManagedSidechannel extends Sidechannel {
           this._sendWelcome(record, entry, connection);
           this._sendAuth(record, entry);
           for (const { payload, bytes, auth } of this._takeQueue(record)) {
-            if (auth || this._remoteAuthorized(entry.name, connection)) this._sendFrame(record, payload, bytes);
+            if (auth || this._remoteAuthorized(entry.name, connection)) this._sendFrame(record, payload, bytes, 'own');
+            else this.traffic.ownDropped++;
           }
           return;
         }
@@ -789,6 +976,7 @@ export class ManagedSidechannel extends Sidechannel {
       const record = perConn.get(entry.name);
       if (record) {
         this._takeQueue(record);
+        this._purgeBacklog(perConn, queued => queued === record);
         try {
           record?.channel?.close?.();
         } catch (_e) {}
@@ -852,7 +1040,7 @@ export class ManagedSidechannel extends Sidechannel {
     try {
       if (!boundedValue(payload)) return false;
       envelope = JSON.parse(JSON.stringify({ ...payload, ttl: this._hopLimit() }));
-      key = seenKey(envelope, this.channels.get(channel).scope, true);
+      key = this._receiptKey(this.channels.get(channel), envelope, true);
       if (!key || this.recentReplays.has(key) || envelope.channel !== channel || !boundedValue(envelope)) return false;
       bytes = frameBytes(envelope);
       if (bytes > MAX_FRAME_BYTES || b4a.byteLength(JSON.stringify(envelope)) > this.maxMessageBytes) return false;
@@ -874,12 +1062,11 @@ export class ManagedSidechannel extends Sidechannel {
     for (const [connection, perConn] of this.connections) {
       const record = perConn.get(channel);
       if (!record?.channel?.opened || record.channel.closed || !this._remoteAuthorized(channel, connection)) continue;
-      if (record.channel.drained === false) continue;
       if (!remembered) {
         if (!this._rememberOutbound(envelope)) return false;
         remembered = true;
       }
-      if (this._sendFrame(record, envelope, bytes)) sent = true;
+      if (this._sendFrame(record, envelope, bytes, 'rebroadcast')) sent = true;
     }
     if (sent) this.recentReplays.set(key, now);
     return sent;
@@ -932,6 +1119,10 @@ export class ManagedSidechannel extends Sidechannel {
     const bytes = entry.managed ? frameBytes(payload) : payloadBytes;
     if ((entry.managed && bytes > MAX_FRAME_BYTES) || !this._rememberOutbound(payload)) return false;
     const snapshot = JSON.parse(payloadJson);
+    // Report failure when there was at least one eligible session and none
+    // of them sent or queued the frame. Partial skips are counted in traffic.
+    let eligible = 0;
+    let accepted = 0;
     for (const [connection, perConn] of this.connections.entries()) {
       if (!allowUnauthedSend && !this._remoteAuthorized(channel, connection)) {
         if (this.debug) {
@@ -941,16 +1132,19 @@ export class ManagedSidechannel extends Sidechannel {
       }
       const record = perConn.get(channel);
       if (!record?.message || record.channel.closed) continue;
+      eligible++;
       if (record.channel.opened) {
-        if (entry.managed) this._sendFrame(record, snapshot, bytes);
-        else if (record.channel.drained !== false) record.message.send(snapshot);
+        if (this._sendFrame(record, snapshot, bytes, 'own')) accepted++;
       } else if (this.pendingFrames < MAX_PENDING_FRAMES && this.pendingBytes + bytes <= MAX_FRAME_BYTES) {
         record.pending.push({ payload: snapshot, bytes, auth: allowUnauthedSend });
         this.pendingFrames++;
         this.pendingBytes += bytes;
+        accepted++;
+      } else {
+        this.traffic.ownDropped++;
       }
     }
-    return true;
+    return eligible === 0 || accepted > 0;
   }
 
   _waitFor(promise, timeout = 0) {
@@ -1052,6 +1246,7 @@ export class ManagedSidechannel extends Sidechannel {
     this.rateLimits.clear();
     this.admission = new WeakMap();
     this.globalAdmission = {};
+    this.forwarding = new WeakMap();
     this.forwardBudget = {};
     this.replayBudget = {};
     this.recentReplays.clear();

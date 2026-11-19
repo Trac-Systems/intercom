@@ -446,10 +446,14 @@ test('effective PoW caps at 16 bits and an exhausted mining budget leaves no par
   assert.equal(mine(limited, { powDifficulty: 16 }, JSON.stringify), false);
   assert.equal(limited.pow, undefined);
 
-  const { sc } = peer(Current, bob, { ...opts({ verifySignature: true }), powEnabled: true, powDifficulty: 17 });
-  const outgoing = port(sc);
-  assert.equal(sc.broadcast('room', 'over inherited work bound'), false);
-  assert.equal(outgoing.sent.length, 0);
+  // An inherited difficulty the bounded miner can never meet is refused at
+  // construction, and a managed runtime join with it is refused too.
+  assert.throws(() => peer(Current, bob, { ...opts({ verifySignature: true }), powEnabled: true, powDifficulty: 17 }), RangeError);
+  const { sc } = peer(Current, bob, { powEnabled: true, powDifficulty: 17, channelOptions: { room: { powDifficulty: 4 } } });
+  assert.equal(await sc.addChannel('other', { verifySignature: true }), false);
+  assert.equal(sc.channels.has('other'), false);
+  assert.ok(sc._registerChannel('third', { verifySignature: true, powDifficulty: 16 }));
+  assert.equal(sc.channelPolicies.get('third')?.powDifficulty, 16);
 });
 
 test('persistent startup loads the newest 20,000 hashes even with a larger legacy maxSeen', async t => {
