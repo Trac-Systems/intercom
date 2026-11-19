@@ -602,6 +602,7 @@ peer.sidechannel = sidechannel;
 
 let terminalReadline = null;
 let shutdownStarted = false;
+let exitCode = 0;
 let resolveLifetime = null;
 const lifetime = new Promise((resolve) => {
   resolveLifetime = resolve;
@@ -628,7 +629,7 @@ const shutdown = async () => {
     await msb.close?.();
   } catch (_e) {}
   resolveLifetime?.();
-  if (typeof Bare !== 'undefined' && Bare.exit) Bare.exit(0);
+  if (typeof Bare !== 'undefined' && Bare.exit) Bare.exit(exitCode);
 };
 
 if (typeof Pear !== 'undefined' && Pear.teardown) Pear.teardown(shutdown);
@@ -656,6 +657,7 @@ try {
   await sidechannel.start();
   console.log('Sidechannel: ready');
 } catch (err) {
+  if (selection) exitCode = 1;
   console.error('Sidechannel failed to start:', err?.message ?? err);
   await shutdown();
   throw err;

@@ -1,6 +1,8 @@
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import path from 'node:path';
+import { spawnSync } from 'node:child_process';
+import { createRequire } from 'node:module';
 import c from 'compact-encoding';
 import { SeenCache } from '../features/sidechannel/seen.js';
 import test from 'node:test';
@@ -313,4 +315,39 @@ test('forwarding charges each destination against the instance byte budget', () 
   now += 1000;
   send('next');
   assert.equal(outputs.flatMap(port => port.sent).length, 16);
+});
+
+test('a writer conflict exits the bundled launcher with a failed startup status', () => {
+  const root = fs.mkdtempSync('./.seen-test-');
+  const directory = path.resolve(root, 'receipts');
+  const owner = new SeenCache(10, 1000, { directory });
+  try {
+    owner.prepare(Date.now());
+    const launcher = fs.readFileSync(new URL('../index.js', import.meta.url), 'utf8');
+    const teardown = launcher.match(/^let terminalReadline = [\s\S]+?^};/m);
+    const startup = launcher.match(/^try \{\n  await sidechannel\.start\(\);[\s\S]+?^}/m);
+    assert.ok(teardown && startup);
+    // Include the launcher's catch block through the next top-level statement.
+    const startAndCatch = launcher.slice(startup.index, launcher.indexOf('const terminal =', startup.index));
+    const moduleURL = new URL('../features/sidechannel/managed.js', import.meta.url).href;
+    const probe = path.join(root, 'probe.mjs');
+    fs.writeFileSync(probe, [
+      'import Managed from ' + JSON.stringify(moduleURL) + ';',
+      'const selection = { Type: Managed };',
+      'const scBridge = null, blindRelay = null, msb = null;',
+      'const peer = { swarm: { join() {}, on() {}, flush() {} } };',
+      'const sidechannel = new Managed(peer, { seenPersistence: { directory: Bare.argv[2] } });',
+      teardown[0], startAndCatch, 'Bare.exit(0);'
+    ].join('\n'));
+    const requireSidecar = createRequire(import.meta.resolve('bare-sidecar'));
+    const run = spawnSync(requireSidecar('./lib/bare'), [path.resolve(probe), directory], {
+      encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe', 'pipe'], timeout: 10000
+    });
+    assert.ifError(run.error);
+    assert.match(run.stderr, /Sidechannel failed to start:.*EEXIST/);
+    assert.equal(run.status, 1);
+  } finally {
+    owner.close();
+    fs.rmSync(root, { recursive: true, force: true });
+  }
 });
