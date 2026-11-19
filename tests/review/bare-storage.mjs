@@ -13,10 +13,19 @@ const config = {
   channelOptions: { room: { verifySignature: true, powDifficulty: 5 } },
   seenPersistence: { directory: Bare.argv[2], hours: 2, maxFileBytes: 64 }
 };
-const sc = new Candidate({ wallet }, config);
+const peer = { wallet, swarm: { on() {}, join() {}, flush() {} } };
+const sc = new Candidate(peer, config);
 const release = new Release({ wallet }, { powEnabled: true, powDifficulty: 5 });
 const now = 36000000;
 sc._now = () => now;
+await sc.start();
+let conflict = false;
+try {
+  await new Candidate(peer, config).start();
+} catch (error) {
+  conflict = error.code === 'EEXIST';
+}
+if (!conflict) throw new Error('The second Bare writer must encounter the existing lock');
 const keys = [];
 for (const text of ['first', 'second', 'third']) {
   const frame = c.decode(c.json, c.encode(c.json, sc._buildPayload('room', text)));

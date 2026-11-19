@@ -309,6 +309,7 @@ export class ManagedSidechannel extends Sidechannel {
     const owner = this._getOwnerKey(channel);
     const welcome = policy?.welcome ?? this.configuredWelcomes.get(channel);
     const learned = this.welcomeByChannel.get(channel);
+    const wasWelcomed = this.welcomedChannels.has(channel);
     this.welcomedChannels.delete(channel);
     this.welcomeByChannel.delete(channel);
     try {
@@ -318,6 +319,8 @@ export class ManagedSidechannel extends Sidechannel {
       if (!this._isWelcomed(channel) && learned) this._verifyWelcome(learned, channel, null);
     } catch {
       this.channels.delete(channel);
+      if (learned) this.welcomeByChannel.set(channel, learned);
+      if (wasWelcomed) this.welcomedChannels.add(channel);
       if (previous) this.channelPolicies.set(channel, previous);
       else this.channelPolicies.delete(channel);
       return null;
@@ -494,10 +497,12 @@ export class ManagedSidechannel extends Sidechannel {
     this.admission.delete(connection);
     connection.removeListener?.('close', records.onClose);
     for (const timer of records.timers.values()) clearTimeout(timer);
-    for (const protocol of records._paired) connection.userData?.unpair?.({ protocol });
+    for (const protocol of records._paired) {
+      try { connection.userData?.unpair?.({ protocol }); } catch { /* The mux may already be destroyed. */ }
+    }
     for (const record of records.values()) {
       this._takeQueue(record);
-      record.channel.close();
+      try { record.channel.close(); } catch { /* The transport is closing. */ }
     }
   }
 
@@ -559,8 +564,13 @@ export class ManagedSidechannel extends Sidechannel {
     const ownerOnly = this._ownerWriteOnly(entry.name) && control !== 'auth' && control !== 'welcome';
     const required = ownerOnly || policy?.verifySignature;
     const signed = !!(payload.sig || payload.signature);
-    let key = seenKey(payload, entry.scope, signed);
-    if (!key || this._alreadySeen(key) || (required && !signed)) return;
+    let key = seenKey(payload, entry.scope, true);
+    if (!key || this._alreadySeen(key)) return;
+    if (!signed) {
+      if (required) return;
+      key = seenKey(payload, entry.scope, false);
+      if (this._alreadySeen(key)) return;
+    }
     if (!boundedValue(payload) || !metadataFits(payload)) return;
     let verified = false;
     let content, envelope, action;
@@ -1046,7 +1056,9 @@ export class ManagedSidechannel extends Sidechannel {
     this.replayBudget = {};
     this.recentReplays.clear();
     for (const entry of this.channels.values()) {
-      if (entry.discoveryJoined) this.peer.swarm?.leave?.(entry.topic);
+      if (entry.discoveryJoined) {
+        try { this.peer.swarm?.leave?.(entry.topic)?.catch?.(() => {}); } catch { /* Discovery may already be closed. */ }
+      }
       entry.discoveryJoined = false;
       entry._announcing = null;
       this._markAnnounced(entry, false);

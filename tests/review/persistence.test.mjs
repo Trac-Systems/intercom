@@ -28,6 +28,7 @@ test('a two-second wall-clock correction across midnight preserves a recent rece
   assert.ok(cache.has(receipt, midnight + 1000));
   assert.ok(cache.has(receipt, midnight - 1000));
   assert.ok(cache.has(receipt, midnight + 2000));
+  cache.close();
 });
 
 test('normal forward rotation expires exactly the oldest hour after restarting', t => {
@@ -66,4 +67,5 @@ test('an unavailable append prevents delivery and a successful retry delivers ex
   incoming.inject(payload);
   incoming.inject(payload);
   assert.deepEqual([delivered.length, relay.sent.length, sc.protectedSeen.ids.size], [1, 1, 1]);
+  sc.protectedSeen.close();
 });

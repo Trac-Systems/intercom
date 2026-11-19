@@ -44,6 +44,7 @@ export function channelPolicy(name, options) {
         break;
       }
       case 'welcome': {
+        if (!value || typeof value !== 'object' || Array.isArray(value)) throw new TypeError('Expected a signed welcome');
         if (!boundedValue(value)) throw new RangeError('Invalid welcome size or nesting');
         const json = JSON.stringify(value);
         if (!json || b4a.byteLength(json) > MAX_FRAME_BYTES) throw new RangeError('Invalid welcome size');
@@ -64,7 +65,10 @@ export function receiveEncoding(limit, admit) {
     encode: c.json.encode,
     decode(state) {
       const { start, end } = state;
-      if (!Number.isSafeInteger(start) || !Number.isSafeInteger(end) || start < 0 || end < start) return null;
+      if (!Number.isSafeInteger(start) || !Number.isSafeInteger(end) || start < 0 || end < start) {
+        admit?.(0);
+        return null;
+      }
       const bytes = end - start;
       // Charge the attempt before touching JSON, including ordinary rejected
       // and oversized frames. Never advance an invalid cursor past its view.

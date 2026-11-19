@@ -69,6 +69,7 @@ class HourFiles {
     this.uid = globalThis.process?.geteuid?.() ?? os.userInfo().uid;
     this.lockPath = path.join(this.directory, '.writer.lock');
     this.lock = null;
+    this.directoryFd = null;
     this.hour = null;
     this.highWater = 0;
     this.active = null;
@@ -79,28 +80,40 @@ class HourFiles {
   checkDirectory() {
     const stat = fs.lstatSync(this.directory);
     if (!stat.isDirectory() || stat.uid !== this.uid || (stat.mode & 0o077) ||
-        (this.lock && !sameFile(this.parent, stat))) throw new Error('Expected a private, owner-only seen directory');
+        (this.directoryFd !== null && !sameFile(fs.fstatSync(this.directoryFd), stat))) throw new Error('Expected a private, owner-only seen directory');
     if (this.lock && !sameFile(this.lock, fs.lstatSync(this.lockPath))) throw new Error('Seen writer lock changed');
     return stat;
   }
 
   acquire() {
     fs.mkdirSync(this.directory, { recursive: true, mode: 0o700 });
-    this.parent = this.checkDirectory();
-    // mkdir is exclusive on both supported runtimes. Never steal a stale lock.
-    fs.mkdirSync(this.lockPath, { mode: 0o700 });
-    this.lock = fs.lstatSync(this.lockPath);
-    this.checkDirectory();
+    const parent = this.checkDirectory();
+    this.directoryFd = fs.openSync(this.directory, fs.constants.O_RDONLY | this.flags.safe);
+    try {
+      if (!sameFile(parent, this.checkDirectory())) throw new Error('Seen directory changed before locking');
+      // mkdir is exclusive on both supported runtimes. Never steal a stale lock.
+      fs.mkdirSync(this.lockPath, { mode: 0o700 });
+      this.lock = fs.lstatSync(this.lockPath);
+      this.checkDirectory();
+    } catch (error) {
+      fs.closeSync(this.directoryFd);
+      this.directoryFd = null;
+      this.lock = null;
+      throw error;
+    }
   }
 
   close() {
-    if (this.lock) {
-      this.checkDirectory();
-      fs.rmdirSync(this.lockPath);
-      this.lock = null;
+    try {
+      if (this.lock) {
+        this.checkDirectory();
+        fs.rmdirSync(this.lockPath);
+      }
+    } finally {
+      if (this.directoryFd !== null) fs.closeSync(this.directoryFd);
+      this.directoryFd = null;
+      this.lock = this.hour = this.active = null;
     }
-    this.hour = null;
-    this.active = null;
   }
 
   regular(file) {
@@ -126,7 +139,7 @@ class HourFiles {
   }
 
   replace(file, data, expected) {
-    const temp = path.join(this.directory, 'seen-compact-' + crypto.randomBytes(16).toString('hex') + '.tmp');
+    const temp = path.join(this.directory, 'seen-compact-' + b4a.toString(crypto.randomBytes(16), 'hex') + '.tmp');
     const flags = fs.constants.O_WRONLY | fs.constants.O_CREAT | this.flags.exclusive;
     const fd = this.open(temp, flags);
     try {
@@ -135,8 +148,13 @@ class HourFiles {
       if (!sameFile(this.regular(file), expected) || !sameFile(this.regular(temp), fs.fstatSync(fd))) {
         throw new Error('Seen file changed before compaction');
       }
+      const identity = fs.fstatSync(fd);
       fs.renameSync(temp, file);
-      return fs.fstatSync(fd);
+      return identity;
+    } catch (error) {
+      this.checkDirectory();
+      if (sameFile(this.regular(temp), fs.fstatSync(fd))) fs.unlinkSync(temp);
+      throw error;
     } finally {
       fs.closeSync(fd);
     }
@@ -171,6 +189,9 @@ class HourFiles {
     } finally {
       dir.closeSync();
     }
+    if (this.active && !sameFile(this.active, files.find(item => item.hour === this.highWater)?.stat)) {
+      throw new Error('Active seen file identity changed');
+    }
     files.sort((a, b) => b.hour - a.hour);
     const hour = Math.max(observed, this.highWater, files[0]?.hour ?? 0);
     let remaining = maxIds;
@@ -187,7 +208,10 @@ class HourFiles {
       const keep = Math.min(this.capacity, aligned);
       const fd = this.open(file, fs.constants.O_RDONLY, stat);
       try {
-        if (stat.size !== keep) item.stat = this.replace(file, readRange(fd, aligned - keep, keep), stat);
+        if (stat.size !== keep) {
+          item.stat = this.replace(file, readRange(fd, aligned - keep, keep), stat);
+          if (sameFile(stat, this.active)) this.active = item.stat;
+        }
         const length = Math.min(remaining * HASH_BYTES, keep);
         if (length) recent.push([item.hour, readRange(fd, aligned - length, length)]);
         remaining -= length / HASH_BYTES;
@@ -200,6 +224,7 @@ class HourFiles {
       this.checkDirectory();
       if (!sameFile(stat, this.regular(file))) throw new Error('Seen file changed before cleanup');
       fs.unlinkSync(file);
+      if (sameFile(stat, this.active)) this.active = null;
     }
     ids.clear();
     for (const [n, data] of recent.reverse()) {
@@ -210,7 +235,8 @@ class HourFiles {
       }
     }
     this.active = active;
-    this.hour = this.highWater = hour;
+    this.hour = hour;
+    this.highWater = hour;
   }
 
   append(key) {
