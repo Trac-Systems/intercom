@@ -97,7 +97,7 @@ Intercom is a single long-running Pear process that participates in three distin
   - `SIDECHANNEL_MAX_STRIKES`
 - Set `--sidechannel-rate-bytes 0` (or `SIDECHANNEL_RATE_BYTES=0`) to disable this configurable byte limiter. Managed channels also have the admission budgets below.
 
-### Opt-in channel policies
+### Opt-in channel policies (0.0.12)
 
 The launcher uses the 0.0.11 `Sidechannel` by default. Enable `ManagedSidechannel` with JSON in `--sidechannel-options` or `SIDECHANNEL_OPTIONS` (CLI takes precedence, including under Bare). Both `channelOptions` and `seenPersistence` default to off. Choose startup channels separately with `--sidechannels` or the constructor's `channels` list.
 
