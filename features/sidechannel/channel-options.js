@@ -52,9 +52,6 @@ export function channelPolicy(name, options) {
       }
     }
   }
-  if (policy.powBitsPerKiB !== undefined && policy.powDifficulty === undefined) {
-    throw new TypeError('powBitsPerKiB requires powDifficulty');
-  }
   if (policy.verifySignature === false) delete policy.verifySignature;
   return Object.keys(policy).length ? policy : null;
 }

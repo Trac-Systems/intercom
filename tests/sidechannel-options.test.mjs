@@ -5,7 +5,7 @@ import crypto from 'node:crypto';
 import fs from 'node:fs';
 import path from 'node:path';
 import Old from './fixtures/sidechannel-0.0.11.js';
-import Current from '../features/sidechannel/index.js';
+import Current from '../features/sidechannel/managed.js';
 import { wallet, peer, port, frame } from './helpers/sidechannel-wire.mjs';
 
 const alice = await wallet();

@@ -2,7 +2,7 @@ import fs from 'fs';
 import c from 'compact-encoding';
 import PeerWallet from 'trac-wallet';
 import Release from '../fixtures/sidechannel-0.0.11.js';
-import Candidate from '../../features/sidechannel/index.js';
+import Candidate from '../../features/sidechannel/managed.js';
 import { seenKey } from '../../features/sidechannel/seen.js';
 
 const wallet = new PeerWallet({});

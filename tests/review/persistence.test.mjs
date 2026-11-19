@@ -4,7 +4,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import test from 'node:test';
-import Candidate from '../../features/sidechannel/index.js';
+import Candidate from '../../features/sidechannel/managed.js';
 import { SeenCache } from '../../features/sidechannel/seen.js';
 import { peer, port, wallet } from '../helpers/sidechannel-wire.mjs';
 

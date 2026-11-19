@@ -3,7 +3,7 @@ import { Duplex } from 'node:stream';
 import test from 'node:test';
 import Protomux from 'protomux';
 import Old from './fixtures/sidechannel-0.0.11.js';
-import Current from '../features/sidechannel/index.js';
+import Current from '../features/sidechannel/managed.js';
 import { wallet, peer, port } from './helpers/sidechannel-wire.mjs';
 
 function streamPair() {

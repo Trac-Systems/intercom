@@ -2,6 +2,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import c from 'compact-encoding';
 import Old from './fixtures/sidechannel-0.0.11.js';
+import Managed from '../features/sidechannel/managed.js';
 import Current from '../features/sidechannel/index.js';
 import { wallet, peer, port, frame } from './helpers/sidechannel-wire.mjs';
 
@@ -104,7 +105,7 @@ test('explicit per-channel PoW produces identical original and relayed bytes at 
   const global = { powEnabled: true, powDifficulty: 9 };
   const selected = { channelOptions: { room: { powDifficulty: 9, verifySignature: true } } };
   const reference = exchange(Old, Old, global);
-  for (const pair of [exchange(Old, Current, global, selected), exchange(Current, Old, selected, global)]) {
+  for (const pair of [exchange(Old, Managed, global, selected), exchange(Managed, Old, selected, global)]) {
     assert.deepEqual(pair.outgoing.sent, reference.outgoing.sent);
     assert.deepEqual(pair.relay.sent, reference.relay.sent);
     assert.deepEqual(pair.delivered, reference.delivered);

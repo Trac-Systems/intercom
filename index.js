@@ -13,7 +13,6 @@ import SampleProtocol from './contract/protocol.js';
 import SampleContract from './contract/contract.js';
 import { Timer } from './features/timer/index.js';
 import Sidechannel from './features/sidechannel/index.js';
-import { launcherOptions } from './features/sidechannel/channel-options.js';
 import ScBridge from './features/sc-bridge/index.js';
 import { fanOutValidatorSends } from './features/validator-fanout/index.js';
 import BlindRelay from './features/blind-relay/index.js';
@@ -136,7 +135,11 @@ const blindRelayConfig = relayConfigFromFlags({
   'blind-relay-serve': flags['blind-relay-serve'] ?? env.BLIND_RELAY_SERVE,
 });
 
-const extraSidechannelOptions = launcherOptions(flags['sidechannel-options'] ?? env.SIDECHANNEL_OPTIONS);
+const rawSidechannelOptions = flags['sidechannel-options'] ?? env.SIDECHANNEL_OPTIONS ??
+  (globalThis.Bare ? (await import('bare-os')).default.getEnv('SIDECHANNEL_OPTIONS') : undefined);
+const selection = rawSidechannelOptions === undefined || rawSidechannelOptions === ''
+  ? null : (await import('./features/sidechannel/managed.js')).selectOptions(rawSidechannelOptions);
+const SidechannelType = selection ? selection.Type : Sidechannel;
 const sidechannelDebugRaw =
   (flags['sidechannel-debug'] && String(flags['sidechannel-debug'])) ||
   env.SIDECHANNEL_DEBUG ||
@@ -563,8 +566,7 @@ if (scBridgeEnabled) {
   });
 }
 
-const sidechannel = new Sidechannel(peer, {
-  ...extraSidechannelOptions,
+const sidechannelConfig = {
   channels: [sidechannelEntry, ...sidechannelExtras],
   debug: sidechannelDebug,
   maxMessageBytes: Number.isSafeInteger(sidechannelMaxBytes) ? sidechannelMaxBytes : undefined,
@@ -593,7 +595,8 @@ const sidechannel = new Sidechannel(peer, {
     : sidechannelQuiet
       ? () => {}
       : null,
-});
+};
+const sidechannel = new SidechannelType(peer, selection ? Object.assign(sidechannelConfig, selection.options) : sidechannelConfig);
 peer.sidechannel = sidechannel;
 
 let terminalReadline = null;

@@ -3,7 +3,7 @@ import { EventEmitter } from 'node:events';
 import test from 'node:test';
 import c from 'compact-encoding';
 import Release from '../fixtures/sidechannel-0.0.11.js';
-import Candidate from '../../features/sidechannel/index.js';
+import Candidate from '../../features/sidechannel/managed.js';
 import { channelPolicy, receiveEncoding } from '../../features/sidechannel/channel-options.js';
 import { frame, peer, port, wallet } from '../helpers/sidechannel-wire.mjs';
 

@@ -24,17 +24,20 @@ function configurationProbe(t) {
   const declarations = [
     /^const getIntercomRuntime = \(\) => \{[\s\S]*?^\};/m,
     /^const \{ env, storeLabel, flags \} = getIntercomRuntime\(\);$/m,
-    /^const extraSidechannelOptions = launcherOptions\([^\n]+\);$/m
+    /^const rawSidechannelOptions =[\s\S]*?;$/m,
+    /^const selection =[\s\S]*?;$/m,
+    /^const SidechannelType = .*;$/m
   ].map(pattern => {
     const match = source.match(pattern);
     assert.ok(match, 'locate the launcher configuration declaration');
-    return match[0];
+    return match[0].replace(/import\('([.][^']+)'\)/g, (_, specifier) =>
+      'import(' + JSON.stringify(new URL(specifier, launcher).href) + ')');
   });
   const directory = fs.mkdtempSync(fileURLToPath(new URL('./.runtime-', import.meta.url)));
   t.after(() => fs.rmSync(directory, { recursive: true, force: true }));
   const entry = path.join(directory, 'probe.mjs');
   fs.writeFileSync(entry, [...relocated, ...declarations,
-    'console.log(JSON.stringify({ version: Bare.versions.bare, options: extraSidechannelOptions }));',
+    'console.log(JSON.stringify({ version: Bare.versions.bare, options: selection?.options, plain: SidechannelType === Sidechannel }));',
     'Bare.exit(0);'
   ].join('\n'));
   return entry;
@@ -50,6 +53,13 @@ function runBundled(entry, args, setting) {
   const last = run.stdout.trim().split('\n').at(-1);
   return JSON.parse(last);
 }
+
+test('the bundled launcher selects the identical release constructor with no effective options', t => {
+  const entry = configurationProbe(t);
+  for (const setting of ['', '{}', '{"seenPersistence":false,"channelOptions":{"room":{"verifySignature":false}}}']) {
+    assert.equal(runBundled(entry, [], setting).plain, true);
+  }
+});
 
 test('bundled Bare selects the supplied JSON CLI option', t => {
   const result = runBundled(configurationProbe(t), ['--sidechannel-options', JSON.stringify(options)], '');
