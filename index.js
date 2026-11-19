@@ -1,6 +1,8 @@
 /** @typedef {import('pear-interface')} */
 import fs from 'fs';
 import path from 'path';
+// Node's process, or bare-process under Bare, so SIGINT/SIGTERM/SIGHUP reach shutdown().
+import process from 'process';
 import b4a from 'b4a';
 import PeerWallet from 'trac-wallet';
 import { Peer, Wallet, createConfig as createPeerConfig, ENV as PEER_ENV } from 'trac-peer';
