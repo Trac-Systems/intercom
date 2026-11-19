@@ -44,9 +44,12 @@ function configurationProbe(t) {
 }
 
 function runBundled(entry, args, setting) {
+  const env = { ...process.env };
+  if (setting === undefined) delete env.SIDECHANNEL_OPTIONS;
+  else env.SIDECHANNEL_OPTIONS = setting;
   const run = spawnSync(bundledBare, [entry, ...args], {
     encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe', 'pipe'], timeout: 10000,
-    env: { ...process.env, SIDECHANNEL_OPTIONS: setting }
+    env
   });
   assert.ifError(run.error);
   assert.equal(run.status, 0, run.stderr);
@@ -56,20 +59,22 @@ function runBundled(entry, args, setting) {
 
 test('the bundled launcher selects the identical release constructor with no effective options', t => {
   const entry = configurationProbe(t);
-  for (const setting of ['', '{}', '{"seenPersistence":false,"channelOptions":{"room":{"verifySignature":false}}}']) {
+  for (const setting of [undefined, '', '{}', '{"seenPersistence":false,"channelOptions":{"room":{"verifySignature":false}}}']) {
     assert.equal(runBundled(entry, [], setting).plain, true);
   }
 });
 
 test('bundled Bare selects the supplied JSON CLI option', t => {
-  const result = runBundled(configurationProbe(t), ['--sidechannel-options', JSON.stringify(options)], '');
+  const result = runBundled(configurationProbe(t), ['--sidechannel-options', JSON.stringify(options)], '{"channelOptions":{"unused":{"powDifficulty":1}}}');
   t.diagnostic('bundled Bare ' + result.version);
+  assert.equal(result.plain, false);
   assert.deepEqual(result.options, options);
 });
 
 test('bundled Bare selects the documented environment-only configuration', t => {
   const result = runBundled(configurationProbe(t), [], JSON.stringify(options));
   t.diagnostic('bundled Bare ' + result.version);
+  assert.equal(result.plain, false);
   assert.deepEqual(result.options, options);
 });
 

@@ -6,6 +6,40 @@ import { boundedValue, channelPolicy, launcherOptions, receiveEncoding, MAX_CHAN
 import { SeenCache, seenKey } from './seen.js';
 import { mine, verifyWork } from './pow.js';
 
+const MAX_HOPS = 8;
+const MAX_METADATA_BYTES = 16 * 1024;
+const MAX_PENDING_FRAMES = 64;
+const REPLAY_WINDOW_MS = 1_000;
+const MIN_ADMISSION_COST = 16 * 1024;
+const GLOBAL_ADMISSION_BYTES = 8 * MAX_FRAME_BYTES;
+
+// One second of burst capacity. A backwards clock step grants no refill.
+function spend(bucket, capacity, cost, now) {
+  if (bucket.time === undefined) {
+    bucket.time = now;
+    bucket.tokens = capacity;
+  } else if (now > bucket.time) {
+    bucket.tokens = Math.min(capacity, bucket.tokens + (now - bucket.time) * capacity / 1000);
+    bucket.time = now;
+  }
+  if (cost > bucket.tokens) return false;
+  bucket.tokens -= cost;
+  return true;
+}
+
+function metadataFits(payload) {
+  const { message, ...metadata } = payload;
+  return b4a.byteLength(JSON.stringify(metadata)) <= MAX_METADATA_BYTES;
+}
+
+function frameBytes(payload) {
+  if (!metadataFits(payload)) return Infinity;
+  const bytes = b4a.byteLength(JSON.stringify(payload));
+  const size = { end: bytes };
+  c.uint.preencode(size, bytes);
+  return size.end;
+}
+
 const HANDSHAKE = Symbol('handshake');
 
 const stableStringify = (value) => {
@@ -44,6 +78,17 @@ export class ManagedSidechannel extends Sidechannel {
     // the wallet, legacy settings and configured welcome map.
     super(peer, { ...config, channels: [] });
     this.config = config;
+    this.admission = new WeakMap();
+    this.globalAdmission = {};
+    this.forwardBudget = {};
+    this.replayBudget = {};
+    this.recentReplays = new Map();
+    this.pendingBytes = 0;
+    this.pendingFrames = 0;
+    this.waits = new Set();
+    this.generation = 0;
+    this.stopped = false;
+    this.storageWarningAt = -Infinity;
     this.configuredWelcomes = new Map(this.welcomeByChannel);
     this.channelPolicies = new Map();
     const options = config.channelOptions;
@@ -78,12 +123,50 @@ export class ManagedSidechannel extends Sidechannel {
   }
 
   _rememberOutbound(payload) {
-    const now = this._now();
-    if (this.seenPersistence != null || this.channelPolicies?.has(payload.channel)) {
-      this.protectedSeen.remember(seenKey(payload), now);
-    } else {
-      this._rememberSeen(payload.id, now);
+    const entry = this.channels.get(payload.channel);
+    if (entry?.managed) {
+      const verified = this._validAuthorSignature(payload, normalizeKeyHex(payload.from));
+      if (!verified && this.channelPolicies.get(entry.name)?.verifySignature) return false;
+      return this._storeReceipt(seenKey(payload, entry.scope, verified));
     }
+    this._rememberSeen(payload.id, this._now());
+    return true;
+  }
+
+  _storageFault(error) {
+    const now = this._now();
+    if (now >= this.storageWarningAt + 30_000) {
+      this.storageWarningAt = now;
+      console.warn('[sidechannel] seen storage unavailable:', error?.message ?? error);
+    }
+  }
+
+  _storeReceipt(key) {
+    try {
+      this.protectedSeen.remember(key, this._now());
+      return true;
+    } catch (error) {
+      this._storageFault(error);
+      return false;
+    }
+  }
+
+  _alreadySeen(key) {
+    try {
+      return this.protectedSeen.has(key, this._now());
+    } catch (error) {
+      this._storageFault(error);
+      return true;
+    }
+  }
+
+  _admit(connection, bytes) {
+    const now = this._now();
+    let local = this.admission.get(connection);
+    if (!local) this.admission.set(connection, local = {});
+    const cost = Math.max(MIN_ADMISSION_COST, Math.min(bytes, MAX_FRAME_BYTES));
+    return spend(local, MAX_FRAME_BYTES, cost, now) &&
+      spend(this.globalAdmission, GLOBAL_ADMISSION_BYTES, cost, now) && this._checkRate(connection, bytes);
   }
 
   _buildPayload(channel, message, invite = null) {
@@ -99,7 +182,7 @@ export class ManagedSidechannel extends Sidechannel {
       origin: from,
       message,
       ts,
-      ttl: this.relayTtl,
+      ttl: this.channels.get(channel)?.managed ? this._hopLimit() : this.relayTtl,
     };
     if (invite) payload.invite = invite;
     if ((this.seenPersistence != null || this.channelPolicies?.has(channel)) && !boundedValue(payload)) return null;
@@ -109,6 +192,34 @@ export class ManagedSidechannel extends Sidechannel {
     const signed = this._attachSig(payload);
     if (!signed && this.channelPolicies?.get(channel)?.verifySignature) return null;
     return payload;
+  }
+
+  _hopLimit() {
+    return Math.max(0, Math.min(MAX_HOPS, this.relayTtl));
+  }
+
+  _sendFrame(record, payload, bytes) {
+    if (!record?.channel?.opened || record.channel.closed || record.channel.drained === false ||
+        bytes > MAX_FRAME_BYTES || !spend(this.forwardBudget, GLOBAL_ADMISSION_BYTES, Math.max(1024, bytes), this._now())) {
+      return false;
+    }
+    record.message.send(payload);
+    return true;
+  }
+
+  _relay(channel, payload, origin) {
+    if (!this.channels.get(channel)?.managed) return super._relay(channel, payload, origin);
+    if (!this.relayEnabled || !Number.isSafeInteger(payload.ttl)) return;
+    const hops = Math.min(payload.ttl, this._hopLimit());
+    if (hops <= 0) return;
+    const relayed = { ...payload, ttl: hops - 1, relayedBy: normalizeKeyHex(this.peer?.wallet?.publicKey) };
+    const bytes = frameBytes(relayed);
+    if (bytes > MAX_FRAME_BYTES) return;
+    for (const [connection, records] of this.connections) {
+      if (connection !== origin && this._remoteAuthorized(channel, connection)) {
+        this._sendFrame(records.get(channel), relayed, bytes);
+      }
+    }
   }
 
   _ownerWriteOnly(channel) {
@@ -182,6 +293,7 @@ export class ManagedSidechannel extends Sidechannel {
         return null;
       }
     }
+    if (existing && options === undefined) return existing;
     if (existing) return stableStringify(policy) === stableStringify(previous) ? existing : null;
     if (this.channels.size >= MAX_CHANNELS) return null;
     // Startup keys always occupy their slot, even during a disabled override.
@@ -212,6 +324,15 @@ export class ManagedSidechannel extends Sidechannel {
     }
     if (owner && owner === normalizeKeyHex(this.peer?.wallet?.publicKey)) this._rememberWelcome(channel);
     entry.managed = !!policy || this.seenPersistence != null;
+    if (entry.managed) {
+      const effective = {
+        policy, owner, ownerOnly: this._ownerWriteOnly(channel), welcome: this._welcomeRequired(channel),
+        requireInvite: this._inviteRequired(channel), inviters: [...(this.inviterKeys ?? [])].sort(),
+        pow: this._boundedPowPolicy(channel), configuredWelcome: welcome,
+        allowRemoteOpen: this.allowRemoteOpen
+      };
+      entry.scope = crypto.createHash('sha256').update(stableStringify(effective)).digest('hex');
+    }
     return entry;
   }
 
@@ -230,8 +351,9 @@ export class ManagedSidechannel extends Sidechannel {
     if (!record?.message) return;
     const payload = this._buildPayload(entry.name, { control: 'welcome', welcome });
     if (!payload) return;
-    this._rememberOutbound(payload);
-    record.message.send(payload);
+    if (!this._rememberOutbound(payload)) return;
+    if (entry.managed) this._sendFrame(record, payload, frameBytes(payload));
+    else record.message.send(payload);
   }
 
   _sendAuth(record, entry) {
@@ -248,9 +370,12 @@ export class ManagedSidechannel extends Sidechannel {
       invite,
     });
     if (!payload) return;
-    this._rememberOutbound(payload);
-    record.message.send(payload);
-    record.authSent = true;
+    if (!this._rememberOutbound(payload)) return;
+    if (entry.managed) record.authSent = this._sendFrame(record, payload, frameBytes(payload));
+    else {
+      record.message.send(payload);
+      record.authSent = true;
+    }
   }
 
   _allowChannelRequest(target, payload, connection) {
@@ -330,35 +455,180 @@ export class ManagedSidechannel extends Sidechannel {
     return openRequest ? target : null;
   }
 
-  _openChannelForConnection(connection, entry) {
-    if ((entry.managed || this.channelPolicies?.has(entry.name)) && this.channels.get(entry.name) !== entry) return;
-    const mux = connection.userData;
-    if (!mux || typeof mux.createChannel !== 'function') {
-      const tries = (connection.__sidechannelMuxTries || 0) + 1;
-      connection.__sidechannelMuxTries = tries;
-      if (tries <= 5) {
-        setTimeout(() => this._openChannelForConnection(connection, entry), 50);
-      } else if (this.debug) {
-        console.log(`[sidechannel:${entry.name}] mux not ready for connection.`);
+  // The inherited invite and welcome verifiers update access maps. Roll back
+  // those specific entries if a later gate or the receipt write fails.
+  _accessCheckpoint(payload, channel, connection) {
+    if (!this._extractWelcome(payload) && !payload.invite && !payload.message?.invite) return null;
+    const remote = this._getRemoteKey(connection);
+    const names = new Set([channel]);
+    if (payload.message?.control === 'open_channel' && typeof payload.message.channel === 'string') {
+      names.add(normalizeChannel(payload.message.channel));
+    }
+    const saved = [...names].map(name => ({
+      name, welcomed: this.welcomedChannels.has(name), welcome: this.welcomeByChannel.get(name),
+      invited: this.invitedPeers.get(name)?.get(remote), hadMap: this.invitedPeers.has(name)
+    }));
+    return () => {
+      for (const { name, welcomed, welcome, invited, hadMap } of saved) {
+        if (!welcomed) this.welcomedChannels.delete(name);
+        if (welcome) this.welcomeByChannel.set(name, welcome);
+        else this.welcomeByChannel.delete(name);
+        if (!hadMap) this.invitedPeers.delete(name);
+        else if (invited === undefined) this.invitedPeers.get(name).delete(remote);
+        else this.invitedPeers.get(name).set(remote, invited);
       }
+    };
+  }
+
+  _takeQueue(record) {
+    for (const item of record.pending) this.pendingBytes -= item.bytes;
+    this.pendingFrames -= record.pending.length;
+    return record.pending.splice(0);
+  }
+
+  _releaseConnection(connection) {
+    const records = this.connections.get(connection);
+    if (!records) return;
+    this.connections.delete(connection);
+    this.rateLimits.delete(connection);
+    this.admission.delete(connection);
+    connection.removeListener?.('close', records.onClose);
+    for (const timer of records.timers.values()) clearTimeout(timer);
+    for (const protocol of records._paired) connection.userData?.unpair?.({ protocol });
+    for (const record of records.values()) {
+      this._takeQueue(record);
+      record.channel.close();
+    }
+  }
+
+  _deliver(entry, connection, payload, action, content, envelope) {
+    if (action === HANDSHAKE) return;
+    if (typeof action === 'string') {
+      const target = action;
+      if (target) {
+        if (this.autoJoinOnOpen) {
+          this.addChannel(target).catch(() => {});
+          console.log(`[sidechannel] auto-joined channel: ${target}`);
+        } else {
+          console.log(`[sidechannel] channel request received: ${target}`);
+        }
+      }
+    } else if (this.onMessage) {
+      // The application owns its delivered copy. Keep the admitted content
+      // for relay even when a callback edits nested objects synchronously.
+      this.onMessage(entry.name, content, connection, envelope);
+    } else {
+      const from = payload?.from ?? 'unknown';
+      const msg = payload?.message ?? null;
+      console.log(`[sidechannel:${entry.name}] ${from}:`, msg);
+    }
+    this._relay(entry.name, payload, connection);
+  }
+
+  _receiveLegacy(entry, connection, payload) {
+    if (this._isBlocked(connection)) return;
+    let content, envelope, action;
+    try {
+      const json = JSON.stringify(payload);
+      if (!this._checkInvite(payload, entry.name, connection) || !this._checkPow(payload, entry.name) ||
+          !this._checkRate(connection, b4a.byteLength(json))) return;
+      const control = payload?.message?.control;
+      const ownerOnly = this._ownerWriteOnly(entry.name) && control !== 'auth' && control !== 'welcome';
+      if (ownerOnly) {
+        const owner = this._getOwnerKey(entry.name);
+        if (!owner || normalizeKeyHex(payload?.from) !== owner || !this._verifySig(payload, owner)) return;
+      }
+      const id = payload?.id ?? `${payload?.from ?? 'unknown'}:${payload?.ts ?? 0}:${payload?.channel ?? entry.name}`;
+      if (this._rememberSeen(id, this._now())) return;
+      action = this._deliveryAction(payload, entry, connection, false);
+      if (action === false) return;
+      if (action === null && this.onMessage) {
+        envelope = JSON.parse(json);
+        content = { ...this._sigPayload(envelope), verified: ownerOnly };
+      }
+    } catch {
       return;
     }
+    this._deliver(entry, connection, payload, action, content, envelope);
+  }
 
+  _receiveManaged(entry, connection, frame, policy) {
+    const { payload } = frame;
+    if (payload?.channel !== entry.name) return;
+    const control = payload.message?.control;
+    const ownerOnly = this._ownerWriteOnly(entry.name) && control !== 'auth' && control !== 'welcome';
+    const required = ownerOnly || policy?.verifySignature;
+    const signed = !!(payload.sig || payload.signature);
+    let key = seenKey(payload, entry.scope, signed);
+    if (!key || this._alreadySeen(key) || (required && !signed)) return;
+    if (!boundedValue(payload) || !metadataFits(payload)) return;
+    let verified = false;
+    let content, envelope, action;
+    let undo;
+    try {
+      if (signed) {
+        const author = normalizeKeyHex(payload.from);
+        if (ownerOnly && author !== this._getOwnerKey(entry.name)) return;
+        verified = this._validAuthorSignature(payload, author);
+        if (!verified) {
+          if (required) return;
+          key = seenKey(payload, entry.scope, false);
+          if (this._alreadySeen(key)) return;
+        }
+      }
+      if (!this._checkPow(payload, entry.name)) return;
+      undo = this._accessCheckpoint(payload, entry.name, connection);
+      if (!this._checkInvite(payload, entry.name, connection)) return;
+      action = this._deliveryAction(payload, entry, connection, true);
+      if (action === false) return;
+      if (action === null && this.onMessage) {
+        envelope = JSON.parse(frame.json);
+        content = { ...this._sigPayload(envelope), verified };
+      }
+      if (!this._storeReceipt(key)) return;
+      undo = null;
+    } catch {
+      return;
+    } finally {
+      undo?.();
+    }
+    this._deliver(entry, connection, payload, action, content, envelope);
+  }
+
+  _openChannelForConnection(connection, entry) {
+    if (this.stopped || this.channels.get(entry.name) !== entry || connection.destroyed) return;
     let perConn = this.connections.get(connection);
     if (!perConn) {
       perConn = new Map();
+      perConn.timers = new Map();
+      perConn._paired = new Set();
+      perConn._openRetries = new Map();
+      perConn.onClose = () => this._releaseConnection(connection);
       this.connections.set(connection, perConn);
+      connection.on?.('close', perConn.onClose);
     }
-    if (perConn.has(entry.name)) return;
-    if (!perConn._paired) perConn._paired = new Set();
-    // Track open retries per connection+channel to avoid infinite retry loops
-    // when the remote peer hasn't joined/paired the protocol yet.
-    if (!perConn._openRetries) perConn._openRetries = new Map();
+    if (perConn.has(entry.name) || perConn.timers.has(entry)) return;
+    const isCurrent = () => this.connections.get(connection) === perConn && this.channels.get(entry.name) === entry;
+    const retry = delay => {
+      perConn.timers.set(entry, setTimeout(() => {
+        perConn.timers.delete(entry);
+        if (isCurrent()) this._openChannelForConnection(connection, entry);
+      }, delay));
+    };
+    const mux = connection.userData;
+    if (!mux || typeof mux.createChannel !== 'function') {
+      const tries = perConn._openRetries.get(entry.name)?.count ?? 0;
+      if (tries < 5) {
+        perConn._openRetries.set(entry.name, { count: tries + 1, lastAt: this._now() });
+        retry(50);
+      }
+      return;
+    }
     if (!perConn._paired.has(entry.protocol)) {
       perConn._paired.add(entry.protocol);
       if (typeof mux.pair === 'function') {
         mux.pair({ protocol: entry.protocol }, () => {
-          this._openChannelForConnection(connection, entry);
+          if (isCurrent()) this._openChannelForConnection(connection, entry);
         });
       }
     }
@@ -382,142 +652,27 @@ export class ManagedSidechannel extends Sidechannel {
       return;
     }
 
-    const deliver = (payload, action, acceptedKey, json) => {
-      if (acceptedKey) this.protectedSeen.remember(acceptedKey, this._now());
-      if (action === HANDSHAKE) return;
-      if (typeof action === 'string') {
-        const target = action;
-        if (target) {
-          if (this.autoJoinOnOpen) {
-            this.addChannel(target).catch(() => {});
-            console.log(`[sidechannel] auto-joined channel: ${target}`);
-          } else {
-            console.log(`[sidechannel] channel request received: ${target}`);
-          }
-        }
-      } else if (this.onMessage) {
-        // The application owns its delivered copy. Keep the admitted content
-        // for relay even when a callback edits nested objects synchronously.
-        const copy = acceptedKey ? JSON.parse(json) : payload;
-        this.onMessage(entry.name, copy, connection);
-      } else {
-        const from = payload?.from ?? 'unknown';
-        const msg = payload?.message ?? payload;
-        console.log(`[sidechannel:${entry.name}] ${from}:`, msg);
+    const active = () => isCurrent() && perConn.get(entry.name)?.channel === channel;
+    const policy = this.channelPolicies.get(entry.name);
+    const message = channel.addMessage(entry.managed ? {
+      encoding: receiveEncoding(policy?.maxReceiveBytes ?? MAX_FRAME_BYTES,
+        bytes => active() && this._admit(connection, bytes)),
+      onmessage: frame => {
+        if (frame && active()) this._receiveManaged(entry, connection, frame, policy);
       }
-      this._relay(entry.name, payload, connection);
-    };
+    } : {
+      encoding: c.json,
+      onmessage: payload => { if (active()) this._receiveLegacy(entry, connection, payload); }
+    });
 
-    const legacyReceive = (payload) => {
-      if (this.channelPolicies?.has(entry.name) && this.channels.get(entry.name) !== entry) return;
-      if (this._isBlocked(connection)) return;
-      let payloadJson = null;
-      try {
-        payloadJson = JSON.stringify(payload);
-      } catch (_e) {
-        return;
-      }
-      const payloadBytes = b4a.byteLength(payloadJson, 'utf8');
-      if (this.debug) {
-        console.log(
-          `[sidechannel:${entry.name}] recv ${payloadBytes} bytes from ${this._getRemoteKey(connection)}`
-        );
-      }
-      if (!this._checkInvite(payload, entry.name, connection)) {
-        if (this.debug) {
-          console.log(`[sidechannel:${entry.name}] drop (invite) from ${this._getRemoteKey(connection)}`);
-        }
-        return;
-      }
-      if (!this._checkPow(payload, entry.name)) {
-        if (this.debug) {
-          console.log(`[sidechannel:${entry.name}] drop (invalid pow) from ${this._getRemoteKey(connection)}`);
-        }
-        return;
-      }
-      if (!this._checkRate(connection, payloadBytes)) {
-        if (this.debug) {
-          console.log(`[sidechannel:${entry.name}] drop (rate limit) from ${this._getRemoteKey(connection)}`);
-        }
-        return;
-      }
-
-      // Allow a minimal auth handshake even on owner-only channels so invite-only + owner-only
-      // channels can authorize listeners without giving them write access.
-      const controlEarly = payload?.message?.control;
-      const isAuthControl = controlEarly === 'auth';
-      const isWelcomeControl = controlEarly === 'welcome';
-      if (this._ownerWriteOnly(entry.name) && !isAuthControl && !isWelcomeControl) {
-        const ownerKey = this._getOwnerKey(entry.name);
-        const author = normalizeKeyHex(payload?.from);
-        // NOTE: payload.from is user-supplied; verify message signature to prevent spoofing.
-        const sigOk = ownerKey ? this._verifySig(payload, ownerKey) : false;
-        if (!ownerKey || !author || author !== ownerKey || !sigOk) {
-          if (this.debug) {
-            const sigHex = payload?.sig || payload?.signature || '';
-            const hash = crypto.createHash('sha256').update(this._sigBase(payload)).digest('hex');
-            console.log(
-              `[sidechannel:${entry.name}] drop (owner-only) author=${author} owner=${ownerKey} sigOk=${sigOk} sigLen=${sigHex.length} hash=${hash} fromRemote=${this._getRemoteKey(connection)}`
-            );
-          }
-          return;
-        }
-      }
-      const payloadId =
-        payload?.id ?? `${payload?.from ?? 'unknown'}:${payload?.ts ?? 0}:${payload?.channel ?? entry.name}`;
-      const now = this._now();
-      if (this._rememberSeen(payloadId, now)) {
-        if (this.debug) {
-          console.log(`[sidechannel:${entry.name}] drop (duplicate) ${payloadId}`);
-        }
-        return;
-      }
-      const action = this._deliveryAction(payload, entry, connection, false);
-      if (action !== false) deliver(payload, action, null);
-    };
-
-    const policy = this.channelPolicies?.get(entry.name);
-    const protectedChannel = !!policy || this.seenPersistence != null;
-    const limit = policy?.maxReceiveBytes ?? MAX_FRAME_BYTES;
-    const message = channel.addMessage(protectedChannel ? {
-      encoding: receiveEncoding(limit),
-      onmessage: (frame) => {
-        if (!frame || this.channels.get(entry.name) !== entry || this._isBlocked(connection)) return;
-        if (this.connections.get(connection)?.get(entry.name)?.channel !== channel) return;
-        const { payload, bytes } = frame;
-        if (payload?.channel !== entry.name) return;
-        const key = seenKey(payload);
-        if (!key || this.protectedSeen.has(key, this._now()) || bytes > limit) return;
-        if (!boundedValue(payload)) return;
-        let action;
-        try {
-          const control = payload.message?.control;
-          const ownerOnly = this._ownerWriteOnly(entry.name) && control !== 'auth' && control !== 'welcome';
-          if (ownerOnly || policy?.verifySignature) {
-            const author = normalizeKeyHex(payload.from);
-            if (ownerOnly && author !== this._getOwnerKey(entry.name)) return;
-            if (!this._validAuthorSignature(payload, author)) return;
-          }
-          if (!this._checkPow(payload, entry.name)) return;
-          if (!this._checkRate(connection, bytes) || !this._checkInvite(payload, entry.name, connection)) return;
-          action = this._deliveryAction(payload, entry, connection, true);
-        } catch {
-          // Legacy invite/welcome normalizers can reject malformed JSON field types.
-          return;
-        }
-        if (action !== false) deliver(payload, action, key, frame.json);
-      }
-    } : { encoding: c.json, onmessage: legacyReceive });
-
-    const record = { channel, message, retries: 0, authSent: false };
+    const record = { channel, message, authSent: false, pending: [] };
     perConn.set(entry.name, record);
 
     channel.open();
     channel
       .fullyOpened()
       .then((opened) => {
-        if ((entry.managed || this.channelPolicies?.has(entry.name)) &&
-            (this.channels.get(entry.name) !== entry || perConn.get(entry.name) !== record)) return;
+        if (!isCurrent() || perConn.get(entry.name) !== record) return;
         if (this.debug) {
           console.log(
             `[sidechannel:${entry.name}] channel open=${opened} for ${this._getRemoteKey(connection)}`
@@ -527,8 +682,12 @@ export class ManagedSidechannel extends Sidechannel {
           if (perConn._openRetries) perConn._openRetries.delete(entry.name);
           this._sendWelcome(record, entry, connection);
           this._sendAuth(record, entry);
+          for (const { payload, bytes, auth } of this._takeQueue(record)) {
+            if (auth || this._remoteAuthorized(entry.name, connection)) this._sendFrame(record, payload, bytes);
+          }
           return;
         }
+        this._takeQueue(record);
         const now = this._now();
         const state = perConn._openRetries?.get(entry.name) || { count: 0, lastAt: 0 };
         // If the last attempt was a while ago, start a fresh retry burst.
@@ -542,7 +701,7 @@ export class ManagedSidechannel extends Sidechannel {
             record?.channel?.close?.();
           } catch (_e) {}
           perConn.delete(entry.name);
-          setTimeout(() => this._openChannelForConnection(connection, entry), 100 * retryCount);
+          retry(100 * retryCount);
           return;
         }
         if (this.debug) {
@@ -561,12 +720,13 @@ export class ManagedSidechannel extends Sidechannel {
     if (entry.announced) return Promise.resolve(true);
     if (entry._announcing) return entry._announcing;
     if (!this.peer?.swarm) return Promise.resolve(false);
+    const generation = this.generation;
     const announcing = (async () => {
       try {
         this.peer.swarm.join(entry.topic, { server: true, client: true });
-        if (entry.managed) entry.discoveryJoined = true;
+        entry.discoveryJoined = true;
         await this._flushSwarm();
-        if (entry.managed && (this.channels.get(entry.name) !== entry || !this.started)) return false;
+        if (generation !== this.generation || this.channels.get(entry.name) !== entry || !this.started) return false;
         this._markAnnounced(entry, true);
         return true;
       } catch (err) {
@@ -575,7 +735,7 @@ export class ManagedSidechannel extends Sidechannel {
         }
         return false;
       } finally {
-        entry._announcing = null;
+        if (generation === this.generation) entry._announcing = null;
       }
     })();
     entry._announcing = announcing;
@@ -590,14 +750,14 @@ export class ManagedSidechannel extends Sidechannel {
     const announced = this.started
       ? await this._announceChannel(entry)
       : await this._whenAnnounced(entry);
-    if (!announced || (entry.managed && this.channels.get(entry.name) !== entry)) return false;
+    if (!announced || !this.started || this.channels.get(entry.name) !== entry) return false;
 
     for (const connection of this.connections.keys()) {
       this._openChannelForConnection(connection, entry);
     }
     // A passive peer may have established transport connections before it had
     // any sidechannel, so those connections have no sidechannel records yet.
-    if (entry.managed && this.peer.swarm.connections) {
+    if (this.peer.swarm.connections) {
       for (const connection of this.peer.swarm.connections) {
         if (!this.connections.has(connection)) this._openChannelForConnection(connection, entry);
       }
@@ -614,8 +774,11 @@ export class ManagedSidechannel extends Sidechannel {
 
     // Close mux protocol channels for this topic across all active connections.
     for (const [connection, perConn] of this.connections.entries()) {
+      clearTimeout(perConn.timers.get(entry));
+      perConn.timers.delete(entry);
       const record = perConn.get(entry.name);
       if (record) {
+        this._takeQueue(record);
         try {
           record?.channel?.close?.();
         } catch (_e) {}
@@ -625,7 +788,7 @@ export class ManagedSidechannel extends Sidechannel {
         perConn?._openRetries?.delete?.(entry.name);
       } catch (_e) {}
       try {
-        if (entry.managed) connection.userData?.unpair?.({ protocol: entry.protocol });
+        if (perConn._paired.has(entry.protocol)) connection.userData?.unpair?.({ protocol: entry.protocol });
         perConn?._paired?.delete?.(entry.protocol);
       } catch (_e) {}
     }
@@ -669,18 +832,20 @@ export class ManagedSidechannel extends Sidechannel {
   rebroadcast(payload) {
     const channel = payload?.channel;
     if (typeof channel !== 'string' || !this.channels.has(channel)) return false;
-    let envelope;
+    const now = this._now();
+    if (this.stopped || !spend(this.replayBudget, 16, 1, now)) return false;
+    for (const [id, time] of this.recentReplays) {
+      if (now - time < REPLAY_WINDOW_MS) break;
+      this.recentReplays.delete(id);
+    }
+    let envelope, bytes, key;
     try {
       if (!boundedValue(payload)) return false;
-      // Snapshot the actual wire representation. Only TTL is renewed, and
-      // neither the original caller's object nor its nested content is mutated.
-      const json = JSON.stringify({ ...payload, ttl: this.relayTtl });
-      const bytes = b4a.byteLength(json);
-      const size = { end: bytes };
-      c.uint.preencode(size, bytes);
-      if (bytes > this.maxMessageBytes || size.end > MAX_FRAME_BYTES) return false;
-      envelope = JSON.parse(json);
-      if (envelope.channel !== channel || !seenKey(envelope) || !boundedValue(envelope)) return false;
+      envelope = JSON.parse(JSON.stringify({ ...payload, ttl: this._hopLimit() }));
+      key = seenKey(envelope, this.channels.get(channel).scope, true);
+      if (!key || this.recentReplays.has(key) || envelope.channel !== channel || !boundedValue(envelope)) return false;
+      bytes = frameBytes(envelope);
+      if (bytes > MAX_FRAME_BYTES || b4a.byteLength(JSON.stringify(envelope)) > this.maxMessageBytes) return false;
       const control = envelope.message?.control;
       if (control === 'auth' || control === 'welcome') return false;
       const author = normalizeKeyHex(envelope.from);
@@ -695,17 +860,23 @@ export class ManagedSidechannel extends Sidechannel {
       if (!this.inviterKeys?.has(self) && !this._isLocallyInvited(channel)) return false;
     }
     let sent = false;
+    let remembered = false;
     for (const [connection, perConn] of this.connections) {
       const record = perConn.get(channel);
       if (!record?.channel?.opened || record.channel.closed || !this._remoteAuthorized(channel, connection)) continue;
-      if (!sent) this._rememberOutbound(envelope);
-      record.message.send(envelope);
-      sent = true;
+      if (record.channel.drained === false) continue;
+      if (!remembered) {
+        if (!this._rememberOutbound(envelope)) return false;
+        remembered = true;
+      }
+      if (this._sendFrame(record, envelope, bytes)) sent = true;
     }
+    if (sent) this.recentReplays.set(key, now);
     return sent;
   }
 
   broadcast(name, message, options = {}) {
+    if (this.stopped) return false;
     const channel = String(name || '').trim();
     if (!channel) return false;
     const isAuthControl =
@@ -748,7 +919,9 @@ export class ManagedSidechannel extends Sidechannel {
     if (this.debug) {
       console.log(`[sidechannel:${channel}] sending to ${this.connections.size} connections`);
     }
-    this._rememberOutbound(payload);
+    const bytes = entry.managed ? frameBytes(payload) : payloadBytes;
+    if ((entry.managed && bytes > MAX_FRAME_BYTES) || !this._rememberOutbound(payload)) return false;
+    const snapshot = JSON.parse(payloadJson);
     for (const [connection, perConn] of this.connections.entries()) {
       if (!allowUnauthedSend && !this._remoteAuthorized(channel, connection)) {
         if (this.debug) {
@@ -757,63 +930,72 @@ export class ManagedSidechannel extends Sidechannel {
         continue;
       }
       const record = perConn.get(channel);
-      if (record?.message) {
-        if (!record.channel?.opened) {
-          record.channel
-            ?.fullyOpened()
-            .then((opened) => {
-              if (opened) record.message.send(payload);
-            })
-            .catch(() => {});
-        } else {
-          record.message.send(payload);
-        }
-      } else if (this.debug) {
-        console.log(`[sidechannel:${channel}] no message session for connection.`);
+      if (!record?.message || record.channel.closed) continue;
+      if (record.channel.opened) {
+        if (entry.managed) this._sendFrame(record, snapshot, bytes);
+        else if (record.channel.drained !== false) record.message.send(snapshot);
+      } else if (this.pendingFrames < MAX_PENDING_FRAMES && this.pendingBytes + bytes <= MAX_FRAME_BYTES) {
+        record.pending.push({ payload: snapshot, bytes, auth: allowUnauthedSend });
+        this.pendingFrames++;
+        this.pendingBytes += bytes;
       }
     }
     return true;
   }
 
-  async _start() {
-    if (!this.peer?.swarm) {
-      throw new Error('Sidechannel requires peer.swarm to be initialized.');
-    }
-
-    // Hyperswarm can accept `join()` calls before the DHT is fully bootstrapped.
-    // In practice this can lead to missed announces/lookups and permanent
-    // non-discovery until restart. `fullyBootstrapped()` is the authoritative
-    // readiness barrier, so wait for it before joining any sidechannel topic.
-    if (this.seenPersistence != null) this.protectedSeen.prepare(this._now());
-    const dht = this.peer.swarm.dht;
-    let bootPromise = null;
-    if (dht && typeof dht.fullyBootstrapped === 'function') {
-      if (this.debug) console.log('[sidechannel] waiting for DHT bootstrap...');
-      bootPromise = Promise.resolve()
-        .then(() => dht.fullyBootstrapped())
-        .catch(() => {});
-      await bootPromise;
-    }
-    this._dhtBootPromise = bootPromise;
-
-    this.peer.swarm.on('connection', (connection) => {
-      if (this._isBlocked(connection)) return;
-      for (const entry of this.channels.values()) {
-        this._openChannelForConnection(connection, entry);
-      }
-
-      connection.on('close', () => {
-        this.connections.delete(connection);
-      });
+  _waitFor(promise, timeout = 0) {
+    return new Promise(resolve => {
+      const done = () => {
+        this.waits.delete(done);
+        clearTimeout(timer);
+        resolve();
+      };
+      const timer = timeout ? setTimeout(done, timeout) : null;
+      this.waits.add(done);
+      Promise.resolve(promise).then(done, done);
     });
+  }
+
+  async _flushSwarm() {
+    if (this.peer.swarm?.flush) await this._waitFor(this.peer.swarm.flush(), 10_000);
+  }
+
+  start() {
+    if (this._startPromise) return this._startPromise;
+    if (this.started) return Promise.resolve();
+    this.stopped = false;
+    const generation = ++this.generation;
+    const starting = this._start(generation).catch(async error => {
+      if (generation === this.generation) await this.stop();
+      throw error;
+    }).finally(() => {
+      if (this._startPromise === starting) this._startPromise = null;
+    });
+    this._startPromise = starting;
+    return starting;
+  }
+
+  async _start(generation) {
+    const swarm = this.peer?.swarm;
+    if (!swarm) throw new Error('Sidechannel requires peer.swarm to be initialized.');
+    if (this.seenPersistence != null) this.protectedSeen.prepare(this._now());
+    if (swarm.dht?.fullyBootstrapped) await this._waitFor(swarm.dht.fullyBootstrapped());
+    if (generation !== this.generation) return;
+    this.onConnection = connection => {
+      if (generation !== this.generation || this._isBlocked(connection)) return;
+      for (const entry of this.channels.values()) this._openChannelForConnection(connection, entry);
+    };
+    swarm.on('connection', this.onConnection);
+    this.listeningSwarm = swarm;
 
     const round = [];
     for (const entry of this.channels.values()) {
       this.peer.swarm.join(entry.topic, { server: true, client: true });
-      if (entry.managed) entry.discoveryJoined = true;
+      entry.discoveryJoined = true;
       round.push(entry);
     }
     await this._flushSwarm();
+    if (generation !== this.generation) return;
     for (const entry of round) {
       // removeChannel() may have dropped the entry mid-flush; do not resurrect it.
       if (this.channels.get(entry.name) === entry) this._markAnnounced(entry, true);
@@ -838,6 +1020,7 @@ export class ManagedSidechannel extends Sidechannel {
       await Promise.all(stragglers.map((entry) => this._announceChannel(entry)));
     }
 
+    if (generation !== this.generation) return;
     if (this.peer.swarm.connections) {
       for (const connection of this.peer.swarm.connections) {
         for (const entry of this.channels.values()) {
@@ -848,14 +1031,27 @@ export class ManagedSidechannel extends Sidechannel {
   }
 
   async stop() {
+    this.generation++;
+    this.stopped = true;
     this.started = false;
-    this._dhtBootPromise = null;
-    this.connections.clear();
-    if (this.seenPersistence != null) this.protectedSeen.reset();
-    // Nothing is on the swarm any more: drop announced state (a later start()
-    // re-announces from scratch) and release pending waiters with a truthful
-    // "not joined" instead of leaving them hanging.
-    for (const entry of this.channels.values()) this._markAnnounced(entry, false);
+    this._startPromise = null;
+    this.listeningSwarm?.removeListener?.('connection', this.onConnection);
+    this.listeningSwarm = this.onConnection = null;
+    for (const done of this.waits) done();
+    for (const connection of this.connections.keys()) this._releaseConnection(connection);
+    this.rateLimits.clear();
+    this.admission = new WeakMap();
+    this.globalAdmission = {};
+    this.forwardBudget = {};
+    this.replayBudget = {};
+    this.recentReplays.clear();
+    for (const entry of this.channels.values()) {
+      if (entry.discoveryJoined) this.peer.swarm?.leave?.(entry.topic);
+      entry.discoveryJoined = false;
+      entry._announcing = null;
+      this._markAnnounced(entry, false);
+    }
+    this.protectedSeen.close();
   }
 }
 

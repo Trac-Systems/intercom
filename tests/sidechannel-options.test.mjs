@@ -136,8 +136,8 @@ test('bounded persistent hashes survive restart, rotate by hour and exclude reje
   assert.equal(second.relay.sent.length, 2);
   now += 3_600_000;
   second.incoming.inject(payloads[4]);
-  assert.equal(fs.readdirSync(directory).length, 2);
-  for (const name of fs.readdirSync(directory)) {
+  assert.equal(fs.readdirSync(directory).filter(name => name !== '.writer.lock').length, 2);
+  for (const name of fs.readdirSync(directory).filter(name => name !== '.writer.lock')) {
     const bytes = fs.readFileSync(path.join(directory, name));
     assert.ok(bytes.length <= 64);
     assert.ok(!bytes.includes(Buffer.from(payloads[3].id)));
@@ -149,7 +149,7 @@ test('bounded persistent hashes survive restart, rotate by hour and exclude reje
   third.incoming.inject(payloads[4]);
   third.incoming.inject(payloads[3]); // expired oldest hour
   assert.deepEqual(third.delivered.map(d => d.payload.id), [payloads[3].id]);
-  assert.equal(fs.readdirSync(directory).length, 2);
+  assert.equal(fs.readdirSync(directory).filter(name => name !== '.writer.lock').length, 2);
   await third.sc.stop();
 });
 
@@ -157,22 +157,22 @@ test('rebroadcast preserves a signed envelope, resets TTL and respects receivers
   const { sc: sender } = peer(Current, bob, { relayTtl: 4 });
   const { sc, delivered } = peer(Current, bob, opts({ verifySignature: true }));
   let now = 10_000;
-  sc._now = () => now;
+  sender._now = sc._now = () => now;
   const outgoing = port(sender);
   outgoing.destination = port(sc);
   const relay = port(sc);
   const received = author._buildPayload('room', { value: 42 });
   const existing = Object.freeze({ ...received, ttl: 0, relayedBy: 'previous' });
   assert.equal(sender.rebroadcast(existing), true);
-  assert.equal(sender.rebroadcast(existing), true);
+  assert.equal(sender.rebroadcast(existing), false);
   assert.equal(existing.ttl, 0);
-  assert.deepEqual(outgoing.sent.map(frame), Array(2).fill({ ...existing, ttl: 4 }));
+  assert.deepEqual(outgoing.sent.map(frame), [{ ...existing, ttl: 4 }]);
   assert.deepEqual([delivered.length, relay.sent.length], [1, 1]);
   assert.equal(sender.rebroadcast({ ...existing, sig: undefined }), false);
   assert.equal(sender.rebroadcast({ ...existing, message: 'changed' }), false);
   assert.equal(sender.rebroadcast(author._buildPayload('room', { control: 'auth' })), false);
   assert.equal(sender.rebroadcast(author._buildPayload('unknown', 'content')), false);
-  assert.equal(outgoing.sent.length, 2);
+  assert.equal(outgoing.sent.length, 1);
   now += 120_001;
   assert.equal(sender.rebroadcast(existing), true);
   assert.deepEqual([delivered.length, relay.sent.length], [2, 2]);
@@ -303,7 +303,7 @@ test('recent IDs loaded from multiple hours obey maxSeen and recover a partial t
   }
   await first.stop();
   now -= 3_600_000;
-  const newest = path.join(directory, fs.readdirSync(directory).sort().at(-1));
+  const newest = path.join(directory, fs.readdirSync(directory).filter(name => name !== '.writer.lock').sort().at(-1));
   fs.appendFileSync(newest, Buffer.from([0, 1, 2]));
   const { sc, delivered } = peer(Current, bob, { ...config, maxSeen: 2 });
   sc._now = () => now;
@@ -339,7 +339,7 @@ test('hour files recover an interrupted compaction and a smaller configured capa
   assert.equal(delivered.length, 0);
   reopened.inject(payloads[0]);
   assert.equal(delivered.length, 1);
-  const files = fs.readdirSync(directory);
+  const files = fs.readdirSync(directory).filter(name => name !== '.writer.lock');
   assert.equal(files.length, 1);
   assert.equal(fs.statSync(path.join(directory, files[0])).size, 64);
   await sc.stop();
@@ -371,11 +371,11 @@ test('an application can edit its delivered copy without changing the signed rel
   assert.equal(author._verifySig(forwarded, original.from), true);
 });
 
-test('oversize decoding does not access the JSON buffer', () => {
+test('oversize decoding checks the backing length without reading JSON bytes', () => {
   const { sc } = peer(Current, bob, opts({ maxReceiveBytes: 8 }));
   const codec = port(sc).encoding;
   let reads = 0;
-  const state = { start: 3, end: 12, get buffer() { reads++; return null; } };
+  const state = { start: 3, end: 12, buffer: { byteLength: 12, get 3() { reads++; throw new Error('unexpected byte read'); } } };
   assert.equal(codec.decode(state), null);
   assert.equal(reads, 0);
   assert.equal(state.start, state.end);

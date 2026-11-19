@@ -596,6 +596,7 @@ const sidechannelConfig = {
       ? () => {}
       : null,
 };
+if (selection && scBridgeEnabled) sidechannelConfig.onMessage = scBridge.handleSidechannelMessage.bind(scBridge);
 const sidechannel = new SidechannelType(peer, selection ? Object.assign(sidechannelConfig, selection.options) : sidechannelConfig);
 peer.sidechannel = sidechannel;
 

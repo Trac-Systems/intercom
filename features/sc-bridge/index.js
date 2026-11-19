@@ -101,8 +101,10 @@ class ScBridge extends Feature {
     return matchesFilter(client.filter, messageText);
   }
 
-  handleSidechannelMessage(channel, payload, _connection) {
-    const messageText = normalizeText(payload?.message ?? payload);
+  handleSidechannelMessage(channel, payload, _connection, envelope) {
+    const message = payload?.message ?? null;
+    const transport = envelope ?? payload;
+    const messageText = normalizeText(message);
     const event = {
       type: 'sidechannel_message',
       channel,
@@ -110,11 +112,12 @@ class ScBridge extends Feature {
       from: payload?.from ?? null,
       origin: payload?.origin ?? null,
       // Message signatures are not secret; exposing them helps devs verify authenticity/debug drops.
-      sig: payload?.sig ?? payload?.signature ?? null,
-      relayedBy: payload?.relayedBy ?? null,
-      ttl: payload?.ttl ?? null,
-      ts: payload?.ts ?? Date.now(),
-      message: payload?.message ?? payload,
+      sig: transport?.sig ?? transport?.signature ?? null,
+      relayedBy: transport?.relayedBy ?? null,
+      ttl: transport?.ttl ?? null,
+      ts: envelope ? payload.ts : payload?.ts ?? Date.now(),
+      ...(envelope ? { verified: payload.verified } : {}),
+      message,
     };
     if (this.debug) {
       console.log(`[sc-bridge] recv ${channel}:`, messageText);

@@ -58,19 +58,26 @@ export function channelPolicy(name, options) {
 
 // Protomux supplies the end of this individual message, including in a batch.
 // The v1 ID is inside the JSON. Avoid even parsing it above the frame ceiling.
-export function receiveEncoding(limit) {
+export function receiveEncoding(limit, admit) {
   return {
     preencode: c.json.preencode,
     encode: c.json.encode,
     decode(state) {
-      const bytes = state.end - state.start;
-      if (bytes > limit) {
-        state.start = state.end;
-        return null;
-      }
+      const { start, end } = state;
+      if (!Number.isSafeInteger(start) || !Number.isSafeInteger(end) || start < 0 || end < start) return null;
+      const bytes = end - start;
+      // Charge the attempt before touching JSON, including ordinary rejected
+      // and oversized frames. Never advance an invalid cursor past its view.
+      const allowed = !admit || admit(bytes);
+      const buffer = state.buffer;
+      if (!buffer || !Number.isSafeInteger(buffer.byteLength) || end > buffer.byteLength) return null;
+      state.start = end;
+      if (!allowed || bytes > limit) return null;
+      const child = { buffer, start, end };
       try {
-        const json = c.string.decode(state);
-        if (state.start !== state.end) return null;
+        const length = c.uint.decode(child);
+        if (length !== end - child.start) return null;
+        const json = b4a.toString(child.buffer, 'utf8', child.start, end);
         return { bytes, json, payload: JSON.parse(json) };
       } catch {
         return null;

@@ -13,7 +13,7 @@ export function peer(Type, signer, config = {}) {
   const swarm = { join() {}, leave() {}, flush() {}, on() {}, connections: [] };
   const sc = new Type({ wallet: signer, swarm }, {
     channels: ['room'], welcomeRequired: false, rateBytesPerSecond: 0,
-    onMessage(channel, payload) { delivered.push({ channel, payload }); },
+    onMessage(channel, content, connection, envelope) { delivered.push({ channel, payload: envelope ?? content }); },
     ...config
   });
   return { sc, delivered };
