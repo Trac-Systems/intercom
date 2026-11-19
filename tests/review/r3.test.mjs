@@ -103,16 +103,16 @@ test('R3 SC-Bridge three-argument deliveries match 0.0.11 for every filter mode'
 // Under `npm start` the launcher runs in the bundled Bare. Load each
 // launcher's imports, install its verbatim signal block with a recording
 // shutdown, send the runner's SIGTERM and compare how the process ends.
-function bareSignalRun(t, launcherFile) {
+function bareSignalRun(t, launcherFile, selection = null) {
   const source = fs.readFileSync(launcherFile, 'utf8');
   const root = new URL('../../index.js', import.meta.url);
   const imports = source.match(/^import .+ from '[^']+';$/gm).map(line =>
     line.replace(/from '(\.\/[^']+)'/, (_, s) => 'from ' + JSON.stringify(new URL(s, root).href)));
-  const block = source.match(/^if \(typeof process !== 'undefined' && process\.once\) \{\n[\s\S]*?\n\}$/m);
+  const block = source.match(/^(?:const signalProcess = .+;\n)?if \(typeof (\w+) !== 'undefined' && \1\.once\) \{\n[\s\S]*?\n\}$/m);
   assert.ok(block, 'locate the launcher signal block');
   const directory = scratch(t, 'signals-r3');
   const entry = path.join(directory, 'signals.mjs');
-  fs.writeFileSync(entry, [...imports,
+  fs.writeFileSync(entry, [...imports, 'const selection = ' + JSON.stringify(selection) + ';',
     "const shutdown = async () => { console.log('shutdown'); Bare.exit(0); };",
     block[0], "console.log('ready');", 'setInterval(() => {}, 1000);'].join('\n'));
   return new Promise((resolve, reject) => {
@@ -137,4 +137,10 @@ test('R3 under the bundled Bare a SIGTERM ends a release-path launcher exactly a
   const candidate = await bareSignalRun(t, here('../../index.js'));
   t.diagnostic(`0.0.11: ${JSON.stringify(release)}; candidate: ${JSON.stringify(candidate)}`);
   assert.deepEqual(candidate, release);
+});
+
+test('R3 under the bundled Bare a SIGTERM runs shutdown for a managed launcher', async t => {
+  const managed = await bareSignalRun(t, here('../../index.js'), {});
+  t.diagnostic('managed: ' + JSON.stringify(managed));
+  assert.deepEqual(managed, { code: 0, signal: null, shutdown: true });
 });

@@ -34,11 +34,13 @@ test('R2-01 the bundled Bare launcher installs a shutdown hook that can release 
   const imports = source.match(/^import .+ from '[^']+';$/gm).map(line =>
     line.replace(/from '(\.\/[^']+)'/, (_, s) => 'from ' + JSON.stringify(new URL(s, launcher).href)));
   const pear = source.match(/^if \((typeof Pear !== 'undefined' && Pear\.teardown)\) Pear\.teardown\(shutdown\);$/m);
-  const signals = source.match(/^if \((typeof process !== 'undefined' && process\.once)\) \{$/m);
-  assert.ok(pear && signals, 'locate the launcher shutdown guards');
+  // seenPersistence is a managed option, so evaluate the guard with a selection set.
+  const binding = source.match(/^const signalProcess = .+;$/m);
+  const signals = source.match(/^if \((typeof signalProcess !== 'undefined' && signalProcess\.once)\) \{$/m);
+  assert.ok(pear && binding && signals, 'locate the launcher shutdown guards');
   const directory = scratch(t, 'runtime-r2');
   const entry = path.join(directory, 'guards.mjs');
-  fs.writeFileSync(entry, [...imports,
+  fs.writeFileSync(entry, [...imports, 'const selection = {};', binding[0],
     `console.log(JSON.stringify({ teardown: !!(${pear[1]}), signals: !!(${signals[1]}) }));`,
     'Bare.exit(0);'].join('\n'));
   const run = spawnSync(bundledBare, [entry], { encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe', 'pipe'], timeout: 20000 });
