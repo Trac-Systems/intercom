@@ -102,22 +102,35 @@ class ScBridge extends Feature {
   }
 
   handleSidechannelMessage(channel, payload, _connection, envelope) {
-    const message = payload?.message ?? null;
-    const transport = envelope ?? payload;
-    const messageText = normalizeText(message);
-    const event = {
+    // The release Sidechannel passes three arguments: keep its 0.0.11 event.
+    // The managed class adds the wire envelope. It preserves a signed null and
+    // reads routing fields only from the envelope.
+    const managed = envelope !== undefined && envelope !== null;
+    const messageText = normalizeText(managed ? payload?.message ?? null : payload?.message ?? payload);
+    const event = managed ? {
+      type: 'sidechannel_message',
+      channel,
+      id: payload?.id ?? null,
+      from: payload?.from ?? null,
+      origin: payload?.origin ?? null,
+      sig: envelope.sig ?? envelope.signature ?? null,
+      relayedBy: envelope.relayedBy ?? null,
+      ttl: envelope.ttl ?? null,
+      ts: payload?.ts ?? null,
+      verified: payload?.verified === true,
+      message: payload?.message ?? null,
+    } : {
       type: 'sidechannel_message',
       channel,
       id: payload?.id ?? null,
       from: payload?.from ?? null,
       origin: payload?.origin ?? null,
       // Message signatures are not secret; exposing them helps devs verify authenticity/debug drops.
-      sig: transport?.sig ?? transport?.signature ?? null,
-      relayedBy: transport?.relayedBy ?? null,
-      ttl: transport?.ttl ?? null,
-      ts: envelope ? payload.ts : payload?.ts ?? Date.now(),
-      ...(envelope ? { verified: payload.verified } : {}),
-      message,
+      sig: payload?.sig ?? payload?.signature ?? null,
+      relayedBy: payload?.relayedBy ?? null,
+      ttl: payload?.ttl ?? null,
+      ts: payload?.ts ?? Date.now(),
+      message: payload?.message ?? payload,
     };
     if (this.debug) {
       console.log(`[sc-bridge] recv ${channel}:`, messageText);
