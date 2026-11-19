@@ -78,6 +78,46 @@ test('B1: a remote open during a pending local retry opens at once instead of be
   await Promise.all([early.sc.stop(), late.sc.stop()]);
 });
 
+test('a broadcast right after a remote leave and rejoin reaches the peer once its open arrives', async t => {
+  const policy = { channelOptions: { room: { maxReceiveBytes: 65536 } } };
+  const a = peer(Managed, author, policy);
+  const b = peer(Managed, reader, policy);
+  // Frames from B to A can be held in transit, as on a real network.
+  let held = null;
+  const streams = [0, 1].map(i => new Duplex({
+    read() {},
+    write(bytes, _encoding, done) {
+      if (i === 1 && held) held.push(Buffer.from(bytes));
+      else streams[1 - i].push(Buffer.from(bytes));
+      done();
+    }
+  }));
+  t.after(() => { for (const stream of streams) stream.destroy(); });
+  const [muxA, muxB] = streams.map(stream => Protomux.from(stream));
+  const toB = { remotePublicKey: b.sc.peer.wallet.publicKey, userData: muxA };
+  const toA = { remotePublicKey: a.sc.peer.wallet.publicKey, userData: muxB };
+  // broadcast() opens sessions on the swarm's live connections, as with Hyperswarm.
+  a.sc.peer.swarm.connections.push(toB);
+  a.sc._openChannelForConnection(toB, a.sc.channels.get('room'));
+  b.sc._openChannelForConnection(toA, b.sc.channels.get('room'));
+  for (let i = 0; i < 5; i++) await tick();
+  await b.sc.removeChannel('room');
+  for (let i = 0; i < 3; i++) await tick();
+  assert.equal(a.sc.connections.get(toB).get('room').channel.closed, true);
+  // B rejoins and sends its open; A sends while that open is still in transit.
+  held = [];
+  b.sc._openChannelForConnection(toA, b.sc._registerChannel('room'));
+  for (let i = 0; i < 3; i++) await tick();
+  assert.ok(held.length > 0, 'B\'s open is in transit');
+  assert.ok(a.sc.broadcast('room', 'right after rejoin'));
+  const inTransit = held;
+  held = null;
+  for (const bytes of inTransit) streams[0].push(bytes);
+  for (let i = 0; i < 400 && b.delivered.length < 1; i++) await tick();
+  assert.deepEqual(b.delivered.map(d => d.payload.message), ['right after rejoin']);
+  await Promise.all([a.sc.stop(), b.sc.stop()]);
+});
+
 test('B2: own broadcasts queue behind real Protomux backpressure and arrive complete and in order', async t => {
   const policy = { channelOptions: { room: { verifySignature: true } } };
   const a = peer(Managed, author, policy);

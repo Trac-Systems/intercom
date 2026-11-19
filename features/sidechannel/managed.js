@@ -769,8 +769,10 @@ export class ManagedSidechannel extends Sidechannel {
 
   // remoteOpen is set when the remote peer opens this protocol. Protomux
   // rejects that open as soon as the pair callback returns without a local
-  // channel, so cancel a pending local retry and replace a closed session
-  // (left by a remote leave or a rejected open) instead of waiting.
+  // channel, so cancel a pending local retry instead of waiting. A closed
+  // session (left by a remote leave or a rejected open) is replaced on every
+  // open: a local send right after the peer rejoins must open a new session
+  // and queue there rather than stop at the closed record.
   _openChannelForConnection(connection, entry, remoteOpen = false) {
     if (this.stopped || this.channels.get(entry.name) !== entry || connection.destroyed) return;
     let perConn = this.connections.get(connection);
@@ -789,12 +791,12 @@ export class ManagedSidechannel extends Sidechannel {
     if (remoteOpen) {
       clearTimeout(perConn.timers.get(entry));
       perConn.timers.delete(entry);
-      const previous = perConn.get(entry.name);
-      if (previous?.channel?.closed) {
-        perConn.delete(entry.name);
-        this._takeQueue(previous);
-        this._purgeBacklog(perConn, record => record === previous);
-      }
+    }
+    const previous = perConn.get(entry.name);
+    if (previous?.channel?.closed) {
+      perConn.delete(entry.name);
+      this._takeQueue(previous);
+      this._purgeBacklog(perConn, record => record === previous);
     }
     if (perConn.has(entry.name) || perConn.timers.has(entry)) return;
     const isCurrent = () => this.connections.get(connection) === perConn && this.channels.get(entry.name) === entry;
