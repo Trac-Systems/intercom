@@ -95,14 +95,16 @@ Intercom is a single long-running Pear process that participates in three distin
   - `SIDECHANNEL_RATE_BYTES`
   - `SIDECHANNEL_RATE_BURST`
   - `SIDECHANNEL_MAX_STRIKES`
-- Set `--sidechannel-rate-bytes 0` (or `SIDECHANNEL_RATE_BYTES=0`) to disable the limiter entirely on that peer.
+- Set `--sidechannel-rate-bytes 0` (or `SIDECHANNEL_RATE_BYTES=0`) to disable this configurable byte limiter. Managed channels also have the admission budgets below.
 
 ### Opt-in channel policies
 
-The feature accepts `channelOptions` and `seenPersistence`. Both default to off. The launcher accepts the same two keys as JSON through `--sidechannel-options` or `SIDECHANNEL_OPTIONS`. Select startup channels separately with `channels` or `--sidechannels`.
+The launcher uses the 0.0.11 `Sidechannel` by default. Enable `ManagedSidechannel` with JSON in `--sidechannel-options` or `SIDECHANNEL_OPTIONS` (CLI takes precedence, including under Bare). Both `channelOptions` and `seenPersistence` default to off. Choose startup channels separately with `--sidechannels` or the constructor's `channels` list.
 
 ```js
-const sc = new Sidechannel(peer, {
+import { ManagedSidechannel } from './features/sidechannel/managed.js';
+
+const sc = new ManagedSidechannel(peer, {
   channels: ['quotes'],
   channelOptions: {
     quotes: {
@@ -110,21 +112,35 @@ const sc = new Sidechannel(peer, {
       powDifficulty: 8, powBitsPerKiB: 1, welcomeRequired: false
     }
   },
-  seenPersistence: { directory: './stores/peer/seen', hours: 3, maxFileBytes: 65_536 }
+  seenPersistence: { directory: './stores/peer/seen', hours: 3, maxFileBytes: 65_536 },
+  onMessage(channel, content, connection, envelope) {
+    if (content.verified) console.log(channel, content.from, content.message);
+    // Save envelope here if the application needs to rebroadcast it later.
+  }
 });
 await sc.start();
 ```
 
-| Setting | Behavior when selected |
+| Channel setting | Behavior |
 | --- | --- |
-| `verifySignature` | Verify every envelope against its signed `from` key on this channel. Rejected frames never reach the app or a relay. |
-| `maxReceiveBytes` | Count the raw compact JSON frame, including its length prefix. Drop frames over the limit before JSON parsing. A configured channel has a hard ceiling of 1 MiB. The existing sender limit is separate. |
-| `powDifficulty`, `powBitsPerKiB` | Override the channel's global PoW selection. The first 1,024 bytes of canonical UTF-8 message JSON use the base difficulty. Each additional started KiB adds the configured bits (default 0), up to 16 total. Omitting the base inherits the existing PoW setting. The v1 hash and wire fields stay the same. Mining stops after at most 1,048,576 trials or a 256 MiB hash budget and returns a send failure on exhaustion. |
-| `seenPersistence` | Use a private directory dedicated to one running peer. Store only 32-byte hashes of accepted IDs and their scope. Retain the current UTC hour and recent hours (3 total by default, up to 24). Hour files default to 64 KiB and can grow to 256 KiB. When full, a file keeps its newer half before appending. Startup loads the newest hashes up to `maxSeen` (hard limit 20,000). |
+| `verifySignature` | Require a valid signature from the claimed author. A managed channel with optional signatures can deliver unverified content with `content.verified === false`. |
+| `maxReceiveBytes` | Limit the compact JSON body, including its length prefix, before parsing. The managed ceiling is 1 MiB. Reserialized top-level fields outside `message` have a separate 16 KiB limit. |
+| `powDifficulty`, `powBitsPerKiB` | The base inherits the channel's effective global PoW setting. The first 1,024 bytes of canonical UTF-8 **message** JSON use that base. Each additional started KiB adds the configured bits (default 0), up to 16 total. The v1 hash is unchanged. Mining returns failure after at most 1,048,576 trials or a 256 MiB hash-input budget. |
+| `ownerKey`, `ownerWriteOnly`, `welcomeRequired`, `welcome` | Override the existing channel settings. Supply the owner's signed welcome when required. A rejoin revalidates the configured welcome against the effective owner. |
 
-`await sc.addChannel(name, options)` accepts the same per-channel fields, plus `ownerKey`, `ownerWriteOnly`, `welcomeRequired` and a signed `welcome`. For example, `await sc.addChannel('bulletin', { ownerKey, ownerWriteOnly: true, welcomeRequired: true, welcome })` joins with the supplied owner's signed welcome. Omitted owner and welcome settings inherit the existing configuration. Use `await sc.removeChannel(name)` before changing a live policy. A later join inherits its startup policy. Opted-in peers support up to 256 configured policies and 256 joined channels. Persistence applies the bounded receive path to every joined channel.
+Call `await sc.addChannel(name, options)` to install a runtime policy before joining. Leave with `await sc.removeChannel(name)` before replacing it. The managed instance allows 256 memberships and 256 policies, including slots reserved for restorable startup settings. The managed module also exports the plain `Sidechannel` constructor.
 
-Call `sc.rebroadcast(savedPayload)` with the original signed envelope from `onMessage`. It verifies the signature, owner and required work, sends a copy with a fresh local relay TTL to authorized open sessions, and returns whether it sent one. Auth and welcome handshakes are excluded. Receivers ignore IDs they still remember.
+**Identity and replay.** The managed callback's second argument contains the v1 signature projection and the receiver's `verified` result. V1 covers the fixed domain string `sidechannel_message_v1`, ID, channel, normalized `from` and `origin`, timestamp and normalized JSON message. A signed `origin` is the author's claim. The fourth argument is the wire envelope. TTL, relay identity, PoW, top-level invites and extensions are outside the signature. SC-Bridge preserves null messages and reports the verification result on managed deliveries.
+
+Receipts distinguish policy, channel, author, control kind, ID and verification result. A retained verified receipt suppresses repeats. An unverified claim can reserve an ID for other unverified claims from the same claimed author. It cannot suppress a valid signed message. Policy changes use a separate receipt namespace, including after restart. After expiry or eviction, receivers may deliver an ID again.
+
+**Persistence.** `seenPersistence` applies managed admission to every joined channel. Give each running peer a dedicated owner-only directory (0700) under a trusted parent. Startup acquires an exclusive `.writer.lock` directory. A conflict fails startup. Call `await sc.stop()` to release it. After an unclean exit, confirm the writer has stopped before removing the stale lock directory.
+
+The store retains 32-byte digests in UTC hour files (default 3 hours and 64 KiB per file, maximum 24 hours and 256 KiB). A full file keeps its newest half on compaction. Startup loads at most `min(maxSeen, 20000)` records. During a clock regression, writes continue in the highest observed hour. Restart also considers the newest retained bucket. A forward jump immediately expires buckets outside the retention window. A storage error drops that admission before delivery or relay and allows retry after recovery.
+
+**Traffic bounds.** Before decoding managed JSON, token buckets charge each attempt at least 16 KiB against 1 MiB/s per connection and 8 MiB/s per instance, with one second of burst capacity. Rejections spend budget. Managed relay TTL is clamped to the local limit and at most 8 hops. Forwarding checks the complete outgoing frame against 1 MiB and charges each destination against 8 MiB/s per instance. Backpressured sessions skip sends. Pending opens share at most 64 queued copies and 1 MiB.
+
+Call `sc.rebroadcast(envelope)` with the saved fourth callback argument. It checks signature, owner, invite and local work, renews TTL, and returns whether it sent to an authorized open session. Auth and welcome controls are excluded. The service budgets 16 replay attempts/s with a burst of 16 and coalesces a successfully sent ID for one second.
 
 ## Sample Timer
 - The sample timer feature writes periodic contract entries and is disabled by default.
