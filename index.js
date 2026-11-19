@@ -1,8 +1,9 @@
 /** @typedef {import('pear-interface')} */
 import fs from 'fs';
 import path from 'path';
-// Node's process, or bare-process under Bare, so SIGINT/SIGTERM/SIGHUP reach shutdown().
-import process from 'process';
+// Node's process, or bare-process under Bare. Only managed sidechannels use it for SIGINT/SIGTERM/SIGHUP, so the
+// release path keeps 0.0.11's signal behaviour.
+import runtimeProcess from 'process';
 import b4a from 'b4a';
 import PeerWallet from 'trac-wallet';
 import { Peer, Wallet, createConfig as createPeerConfig, ENV as PEER_ENV } from 'trac-peer';
@@ -635,9 +636,10 @@ const shutdown = async () => {
 };
 
 if (typeof Pear !== 'undefined' && Pear.teardown) Pear.teardown(shutdown);
-if (typeof process !== 'undefined' && process.once) {
+const signalProcess = selection ? runtimeProcess : globalThis.process;
+if (typeof signalProcess !== 'undefined' && signalProcess.once) {
   for (const signal of ['SIGHUP', 'SIGINT', 'SIGTERM']) {
-    process.once(signal, () => {
+    signalProcess.once(signal, () => {
       void shutdown();
     });
   }
