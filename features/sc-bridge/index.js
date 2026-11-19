@@ -101,9 +101,25 @@ class ScBridge extends Feature {
     return matchesFilter(client.filter, messageText);
   }
 
-  handleSidechannelMessage(channel, payload, _connection) {
-    const messageText = normalizeText(payload?.message ?? payload);
-    const event = {
+  handleSidechannelMessage(channel, payload, _connection, envelope) {
+    // The release Sidechannel passes three arguments: keep its 0.0.11 event.
+    // The managed class adds the wire envelope. It preserves a signed null and
+    // reads routing fields only from the envelope.
+    const managed = envelope !== undefined && envelope !== null;
+    const messageText = normalizeText(managed ? payload?.message ?? null : payload?.message ?? payload);
+    const event = managed ? {
+      type: 'sidechannel_message',
+      channel,
+      id: payload?.id ?? null,
+      from: payload?.from ?? null,
+      origin: payload?.origin ?? null,
+      sig: envelope.sig ?? envelope.signature ?? null,
+      relayedBy: envelope.relayedBy ?? null,
+      ttl: envelope.ttl ?? null,
+      ts: payload?.ts ?? null,
+      verified: payload?.verified === true,
+      message: payload?.message ?? null,
+    } : {
       type: 'sidechannel_message',
       channel,
       id: payload?.id ?? null,

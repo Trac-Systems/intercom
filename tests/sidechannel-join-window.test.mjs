@@ -279,3 +279,31 @@ test('concurrent start() calls share one bootstrap', async () => {
   await Promise.all([first, second]);
   assert.equal(sc.started, true);
 });
+
+test('bridge preserves a signed null and uses transport fields only for routing metadata', async t => {
+  const Bridge = await loadScBridge();
+  if (!Bridge) return t.skip('The Node runtime lacks module.registerHooks');
+  const bridge = new Bridge({}, {});
+  const events = [];
+  bridge.clients.add({ ready: true, socket: { write(data) { events.push(JSON.parse(data)); } } });
+  const content = { id: 'receipt', from: 'author', ts: null, message: null, verified: true };
+  bridge.handleSidechannelMessage('room', content, null, { message: 'outer', from: 'relay', ttl: 2, sig: 'signature' });
+  bridge.handleSidechannelMessage('room', { id: 'empty', verified: true }, null, { id: 'empty' });
+  assert.deepEqual(events.map(e => e.message), [null, null]);
+  assert.deepEqual([events[0].from, events[0].ts, events[0].ttl, events[0].sig, events[0].verified],
+    ['author', null, 2, 'signature', true]);
+});
+
+test('bridge keeps the 0.0.11 event for the three-argument release callback', async t => {
+  const Bridge = await loadScBridge();
+  if (!Bridge) return t.skip('The Node runtime lacks module.registerHooks');
+  const bridge = new Bridge({}, {});
+  const events = [];
+  bridge.clients.add({ ready: true, socket: { write(data) { events.push(JSON.parse(data)); } } });
+  const envelope = { type: 'sidechannel', id: 'x', channel: 'room', from: 'a', ts: 7, ttl: 2, sig: 's', relayedBy: 'r' };
+  bridge.handleSidechannelMessage('room', envelope, null);
+  bridge.handleSidechannelMessage('room', { ...envelope, message: null }, null);
+  assert.deepEqual(events.map(e => e.message), [envelope, { ...envelope, message: null }]);
+  assert.deepEqual([events[0].sig, events[0].relayedBy, events[0].ttl, events[0].ts, 'verified' in events[0]],
+    ['s', 'r', 2, 7, false]);
+});

@@ -1,6 +1,9 @@
 /** @typedef {import('pear-interface')} */
 import fs from 'fs';
 import path from 'path';
+// Node's process, or bare-process under Bare. Only managed sidechannels use it for SIGINT/SIGTERM/SIGHUP, so the
+// release path keeps 0.0.11's signal behaviour.
+import runtimeProcess from 'process';
 import b4a from 'b4a';
 import PeerWallet from 'trac-wallet';
 import { Peer, Wallet, createConfig as createPeerConfig, ENV as PEER_ENV } from 'trac-peer';
@@ -135,6 +138,11 @@ const blindRelayConfig = relayConfigFromFlags({
   'blind-relay-serve': flags['blind-relay-serve'] ?? env.BLIND_RELAY_SERVE,
 });
 
+const rawSidechannelOptions = flags['sidechannel-options'] ?? env.SIDECHANNEL_OPTIONS ??
+  (globalThis.Bare ? (await import('bare-os')).default.getEnv('SIDECHANNEL_OPTIONS') : undefined);
+const selection = rawSidechannelOptions === undefined || rawSidechannelOptions === ''
+  ? null : (await import('./features/sidechannel/managed.js')).selectOptions(rawSidechannelOptions);
+const SidechannelType = selection ? selection.Type : Sidechannel;
 const sidechannelDebugRaw =
   (flags['sidechannel-debug'] && String(flags['sidechannel-debug'])) ||
   env.SIDECHANNEL_DEBUG ||
@@ -561,7 +569,7 @@ if (scBridgeEnabled) {
   });
 }
 
-const sidechannel = new Sidechannel(peer, {
+const sidechannelConfig = {
   channels: [sidechannelEntry, ...sidechannelExtras],
   debug: sidechannelDebug,
   maxMessageBytes: Number.isSafeInteger(sidechannelMaxBytes) ? sidechannelMaxBytes : undefined,
@@ -590,11 +598,14 @@ const sidechannel = new Sidechannel(peer, {
     : sidechannelQuiet
       ? () => {}
       : null,
-});
+};
+if (selection && scBridgeEnabled) sidechannelConfig.onMessage = scBridge.handleSidechannelMessage.bind(scBridge);
+const sidechannel = new SidechannelType(peer, selection ? Object.assign(sidechannelConfig, selection.options) : sidechannelConfig);
 peer.sidechannel = sidechannel;
 
 let terminalReadline = null;
 let shutdownStarted = false;
+let exitCode = 0;
 let resolveLifetime = null;
 const lifetime = new Promise((resolve) => {
   resolveLifetime = resolve;
@@ -621,13 +632,14 @@ const shutdown = async () => {
     await msb.close?.();
   } catch (_e) {}
   resolveLifetime?.();
-  if (typeof Bare !== 'undefined' && Bare.exit) Bare.exit(0);
+  if (typeof Bare !== 'undefined' && Bare.exit) Bare.exit(exitCode);
 };
 
 if (typeof Pear !== 'undefined' && Pear.teardown) Pear.teardown(shutdown);
-if (typeof process !== 'undefined' && process.once) {
+const signalProcess = selection ? runtimeProcess : globalThis.process;
+if (typeof signalProcess !== 'undefined' && signalProcess.once) {
   for (const signal of ['SIGHUP', 'SIGINT', 'SIGTERM']) {
-    process.once(signal, () => {
+    signalProcess.once(signal, () => {
       void shutdown();
     });
   }
@@ -649,6 +661,7 @@ try {
   await sidechannel.start();
   console.log('Sidechannel: ready');
 } catch (err) {
+  if (selection) exitCode = 1;
   console.error('Sidechannel failed to start:', err?.message ?? err);
   await shutdown();
   throw err;

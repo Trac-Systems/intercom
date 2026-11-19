@@ -296,6 +296,29 @@ Blind relay (optional, off by default; see [Blind Relay](#blind-relay-optional))
 - `--blind-relay-serve 0|1` (env: `BLIND_RELAY_SERVE`) : serve as a relay for other peers (**default: 0**).
 - Limits and timeouts (`--blind-relay-max-sessions-per-peer`, `--blind-relay-direct-timeout-ms`, ...) are listed in `features/blind-relay/README.md`.
 
+### Opt-in sidechannel settings
+
+Supply `--sidechannel-options` or `SIDECHANNEL_OPTIONS` as a JSON object. For example, with `--sidechannels quotes`, this config selects signed quotes up to 32 KiB and keeps a local replay cache.
+
+```json
+{
+  "channelOptions": {
+    "quotes": { "verifySignature": true, "maxReceiveBytes": 32768, "powDifficulty": 8, "powBitsPerKiB": 1, "welcomeRequired": false }
+  },
+  "seenPersistence": { "directory": "./stores/peer/seen", "hours": 3, "maxFileBytes": 65536 }
+}
+```
+
+- With options off the launcher constructs the 0.0.11 `Sidechannel`. For embedding, import `{ ManagedSidechannel, Sidechannel }` from `./features/sidechannel/managed.js`. Use `new ManagedSidechannel(peer, config)` for these options, runtime policies and rebroadcast. CLI JSON takes precedence over the environment in Node and Bare.
+- `verifySignature` requires a valid v1 envelope signature from `from`. Read `onMessage(channel, content, connection, envelope)`. Check `content.verified` before trusting the author or `content.message`. V1 signs the fixed domain string `sidechannel_message_v1`, ID, channel, normalized from/origin, timestamp and message. TTL, relayedBy, PoW and other top-level extensions are transport data. The bridge preserves null content.
+- `maxReceiveBytes` counts the compact JSON body and length prefix. The ceiling is 1 MiB, with 16 KiB for serialized fields outside the message. Each managed decode attempt spends at least 16 KiB against 1 MiB/s per connection and an 8 MiB/s instance budget. Every connection is guaranteed an equal share of the instance budget (at most 1 MiB/s) and borrows beyond it only from unused capacity. A blocked or over-limit connection spends nothing. Bursts hold one second of capacity.
+- `powDifficulty` overrides the effective global base for this channel. `powBitsPerKiB` can be used alone and adds bits per started KiB after the first 1,024 bytes of canonical message JSON. The total caps at 16 bits. Budget exhaustion returns a send failure. An inherited global difficulty above 16 on a managed channel throws at construction (and `addChannel` returns `false`).
+- `seenPersistence` selects managed admission on all channels. Use a dedicated 0700 directory per peer on one host and `await sc.stop()` to release its writer lock. Under `npm start`, SIGINT, SIGTERM and SIGHUP run the launcher shutdown in Bare too. After a crash the next start reclaims the lock if its record names this host and an exited process. A live, foreign-host or unidentified lock fails startup with `EEXIST`; confirm the writer is gone before removing it. The store retains up to 24 UTC hours, 256 KiB per file and 20,000 resident hashes (also limited by `maxSeen`). A clock up to one hour behind holds the active hour. Further behind (a corrected forward step), newer receipts move into the current hour. A forward jump ages out old buckets. Storage faults drop the affected admission and allow retry.
+- Receipts are scoped to channel, claimed author, control kind, ID and verification. A verified receipt survives policy edits and restarts. An unverified claim can suppress another unverified use of the same ID under the same policy only. A valid signature gets a separate receipt.
+- Own broadcasts and handshakes queue in order behind backpressure (256 frames and 2 MiB per connection, 8 MiB per instance). `broadcast()` returns `false` if no eligible session sent or queued the frame (`true` with none eligible). Relays are charged to the origin connection's share of 8 MiB/s and skipped on busy sessions. `sc.traffic` counts sent, queued and skipped frames.
+- `await sc.addChannel(name, options)` accepts the signature, size and PoW settings plus `ownerKey`, `ownerWriteOnly`, `welcomeRequired` and the owner's signed `welcome`. Leave before changing a live policy. Rejoin revalidates the configured welcome. Startup policies reserve slots within the 256-policy cap. Memberships also cap at 256.
+- Save the fourth callback argument for `sc.rebroadcast(envelope)`. It renews TTL up to 8 hops and returns whether an authorized open session received a send. Allow 16 attempts/s and one second between successful sends of the same ID. Forwarded copies share an 8 MiB/s service budget. Pre-open sends share 64 queued copies and 1 MiB. Receivers can deliver again after expiry or eviction.
+
 ### Sidechannel Policy Summary
 - **`0000intercom` (entry):** name‑only, open to all, **no owner / welcome / invite** checks.
 - **Public channels:** require **owner‑signed welcome** by default (unless you disable welcome enforcement).
